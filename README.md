@@ -1,6 +1,6 @@
-# Optimization for Machine Learning
+# Optimization for AI
 
-Companion code for **"Optimization for Machine Learning: From Gradient Descent to Modern Optimizers"** by Dr. Vijay Raghavan.
+Companion code for **"Optimization for AI: From Gradient Descent to Modern Optimizers"** by Dr. Vijay Raghavan.
 
 Part of *The AI Engineer's Library* series.
 
