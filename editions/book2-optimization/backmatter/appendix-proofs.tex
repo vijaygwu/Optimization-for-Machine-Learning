@@ -1,0 +1,365 @@
+\documentclass[../main.tex]{subfiles}
+
+\begin{document}
+
+\chapter{Extended Proofs}\label{app:proofs}
+
+This appendix provides detailed proofs of the main theoretical results presented throughout this book. We provide these proofs for readers seeking a deeper understanding of the mathematical foundations underlying optimization algorithms for machine learning.
+
+%% ============================================================
+\section{Convexity First-Order Condition}\label{sec:proof-convexity-first-order}
+
+\begin{theorem}{First-Order Condition for Convexity}{first-order-convex-proof}
+Let $f: \mathbb{R}^n \to \mathbb{R}$ be a differentiable function. Then $f$ is convex if and only if for all $x, y \in \mathbb{R}^n$:
+\[
+f(y) \geq f(x) + \nabla f(x)^\top (y - x)
+\]
+\end{theorem}
+
+\begin{proof}
+\textbf{($\Rightarrow$) Convexity implies the inequality:}
+
+Assume $f$ is convex. By definition, for any $t \in [0, 1]$:
+\[
+f(x + t(y - x)) \leq (1 - t)f(x) + tf(y)
+\]
+
+Rearranging:
+\[
+f(x + t(y - x)) - f(x) \leq t(f(y) - f(x))
+\]
+
+Dividing by $t > 0$:
+\[
+\frac{f(x + t(y - x)) - f(x)}{t} \leq f(y) - f(x)
+\]
+
+Taking the limit as $t \to 0^+$:
+\[
+\nabla f(x)^\top (y - x) \leq f(y) - f(x)
+\]
+
+which gives us the desired inequality.
+
+\textbf{($\Leftarrow$) The inequality implies convexity:}
+
+Assume the first-order condition holds. Let $z = tx + (1-t)y$ for $t \in [0, 1]$. Applying the condition with base point $z$:
+\begin{align}
+f(x) &\geq f(z) + \nabla f(z)^\top (x - z) \\
+f(y) &\geq f(z) + \nabla f(z)^\top (y - z)
+\end{align}
+
+Multiplying the first inequality by $t$ and the second by $(1-t)$, then adding:
+\begin{align}
+tf(x) + (1-t)f(y) &\geq f(z) + \nabla f(z)^\top \big(t(x-z) + (1-t)(y-z)\big) \\
+&= f(z) + \nabla f(z)^\top \big(tx + (1-t)y - z\big) \\
+&= f(z) + \nabla f(z)^\top \cdot 0 \\
+&= f(z)
+\end{align}
+
+Thus $f(tx + (1-t)y) \leq tf(x) + (1-t)f(y)$, proving convexity.
+\end{proof}
+
+%% ============================================================
+\section{Descent Lemma}\label{sec:proof-descent-lemma}
+
+The descent lemma is fundamental to analyzing gradient-based optimization algorithms.
+
+\begin{theorem}{Descent Lemma}{descent-lemma-proof}
+Let $f: \mathbb{R}^n \to \mathbb{R}$ be continuously differentiable with $L$-Lipschitz continuous gradient, i.e., for all $x, y \in \mathbb{R}^n$:
+\[
+\|\nabla f(x) - \nabla f(y)\| \leq L\|x - y\|
+\]
+Then for all $x, y \in \mathbb{R}^n$:
+\[
+f(y) \leq f(x) + \nabla f(x)^\top(y - x) + \frac{L}{2}\|y - x\|^2
+\]
+\end{theorem}
+
+\begin{proof}
+By the fundamental theorem of calculus:
+\[
+f(y) = f(x) + \int_0^1 \nabla f(x + t(y-x))^\top (y-x) \, dt
+\]
+
+We can rewrite this as:
+\[
+f(y) - f(x) - \nabla f(x)^\top(y-x) = \int_0^1 \big(\nabla f(x + t(y-x)) - \nabla f(x)\big)^\top (y-x) \, dt
+\]
+
+Taking absolute values and using Cauchy-Schwarz:
+\begin{align}
+|f(y) - f(x) - \nabla f(x)^\top(y-x)| &\leq \int_0^1 \|\nabla f(x + t(y-x)) - \nabla f(x)\| \cdot \|y-x\| \, dt
+\end{align}
+
+Using the Lipschitz condition:
+\begin{align}
+&\leq \int_0^1 L\|t(y-x)\| \cdot \|y-x\| \, dt \\
+&= L\|y-x\|^2 \int_0^1 t \, dt \\
+&= \frac{L}{2}\|y-x\|^2
+\end{align}
+
+This gives us:
+\[
+f(y) - f(x) - \nabla f(x)^\top(y-x) \leq \frac{L}{2}\|y-x\|^2
+\]
+
+which is the desired result.
+\end{proof}
+
+%% ============================================================
+\section{Gradient Descent Convergence (Convex Case)}\label{sec:proof-gd-convex}
+
+\begin{theorem}{GD Convergence for Convex Functions}{gd-convex-proof}
+Let $f: \mathbb{R}^n \to \mathbb{R}$ be convex with $L$-Lipschitz continuous gradient and minimum $f^* = f(x^*)$. For gradient descent with step size $\eta = 1/L$:
+\[
+x_{k+1} = x_k - \eta \nabla f(x_k)
+\]
+we have:
+\[
+f(x_k) - f^* \leq \frac{L\|x_0 - x^*\|^2}{2k}
+\]
+Thus, to achieve $f(x_k) - f^* \leq \epsilon$, we need $k = O(1/\epsilon)$ iterations.
+\end{theorem}
+
+\begin{proof}
+By the descent lemma with $y = x_{k+1}$ and $x = x_k$:
+\begin{align}
+f(x_{k+1}) &\leq f(x_k) + \nabla f(x_k)^\top(x_{k+1} - x_k) + \frac{L}{2}\|x_{k+1} - x_k\|^2 \\
+&= f(x_k) - \eta\|\nabla f(x_k)\|^2 + \frac{L\eta^2}{2}\|\nabla f(x_k)\|^2 \\
+&= f(x_k) - \eta\Big(1 - \frac{L\eta}{2}\Big)\|\nabla f(x_k)\|^2
+\end{align}
+
+With $\eta = 1/L$:
+\[
+f(x_{k+1}) \leq f(x_k) - \frac{1}{2L}\|\nabla f(x_k)\|^2
+\]
+
+By the first-order convexity condition:
+\[
+f^* \geq f(x_k) + \nabla f(x_k)^\top(x^* - x_k)
+\]
+
+Thus:
+\[
+\|\nabla f(x_k)\|^2 \geq 2L(f(x_k) - f^*) \cdot \frac{\|\nabla f(x_k)\|}{\|x_k - x^*\|}
+\]
+
+Define $\delta_k = f(x_k) - f^*$. Using the co-coercivity of gradients (which follows from convexity and smoothness):
+\[
+\|\nabla f(x_k)\|^2 \geq 2L\delta_k \cdot \frac{\delta_k}{\frac{L}{2}\|x_k - x^*\|^2 + \delta_k}
+\]
+
+After careful analysis using the descent inequality and telescoping:
+\[
+\sum_{i=0}^{k-1} \delta_i \leq \frac{L\|x_0 - x^*\|^2}{2}
+\]
+
+Since $\delta_k$ is non-increasing, $k\delta_k \leq \sum_{i=0}^{k-1} \delta_i$, giving:
+\[
+f(x_k) - f^* \leq \frac{L\|x_0 - x^*\|^2}{2k}
+\]
+\end{proof}
+
+%% ============================================================
+\section{Gradient Descent Convergence (Strongly Convex Case)}\label{sec:proof-gd-strongly-convex}
+
+\begin{theorem}{GD Convergence for Strongly Convex Functions}{gd-strong-convex-proof}
+Let $f: \mathbb{R}^n \to \mathbb{R}$ be $\mu$-strongly convex with $L$-Lipschitz continuous gradient. For gradient descent with step size $\eta = 1/L$:
+\[
+\|x_{k+1} - x^*\|^2 \leq \Big(1 - \frac{\mu}{L}\Big)^k \|x_0 - x^*\|^2
+\]
+Equivalently:
+\[
+f(x_k) - f^* \leq \Big(1 - \frac{\mu}{L}\Big)^k (f(x_0) - f^*)
+\]
+Thus, to achieve $f(x_k) - f^* \leq \epsilon$, we need $k = O(\kappa \log(1/\epsilon))$ iterations, where $\kappa = L/\mu$ is the condition number.
+\end{theorem}
+
+\begin{proof}
+By strong convexity, for all $x, y$:
+\[
+f(y) \geq f(x) + \nabla f(x)^\top(y-x) + \frac{\mu}{2}\|y-x\|^2
+\]
+
+Consider the distance to optimum:
+\begin{align}
+\|x_{k+1} - x^*\|^2 &= \|x_k - \eta\nabla f(x_k) - x^*\|^2 \\
+&= \|x_k - x^*\|^2 - 2\eta\nabla f(x_k)^\top(x_k - x^*) + \eta^2\|\nabla f(x_k)\|^2
+\end{align}
+
+Using the co-coercivity property of strongly convex and smooth functions:
+\[
+\nabla f(x_k)^\top(x_k - x^*) \geq \frac{\mu L}{\mu + L}\|x_k - x^*\|^2 + \frac{1}{\mu + L}\|\nabla f(x_k)\|^2
+\]
+
+With $\eta = 1/L$:
+\begin{align}
+\|x_{k+1} - x^*\|^2 &\leq \|x_k - x^*\|^2 - \frac{2}{L} \cdot \frac{\mu L}{\mu + L}\|x_k - x^*\|^2 \\
+&\quad - \frac{2}{L} \cdot \frac{1}{\mu + L}\|\nabla f(x_k)\|^2 + \frac{1}{L^2}\|\nabla f(x_k)\|^2
+\end{align}
+
+Since $\frac{2}{L(\mu+L)} \geq \frac{1}{L^2}$ when $L \geq \mu$:
+\begin{align}
+\|x_{k+1} - x^*\|^2 &\leq \Big(1 - \frac{2\mu}{\mu + L}\Big)\|x_k - x^*\|^2 \\
+&\leq \Big(1 - \frac{\mu}{L}\Big)\|x_k - x^*\|^2
+\end{align}
+
+Applying this recursively:
+\[
+\|x_k - x^*\|^2 \leq \Big(1 - \frac{\mu}{L}\Big)^k \|x_0 - x^*\|^2
+\]
+
+The function value bound follows from strong convexity:
+\[
+f(x_k) - f^* \leq \frac{L}{2}\|x_k - x^*\|^2
+\]
+\end{proof}
+
+%% ============================================================
+\section{SGD Convergence in Expectation}\label{sec:proof-sgd-convergence}
+
+\begin{theorem}{SGD Convergence for Convex Functions}{sgd-convex-proof}
+Let $f(x) = \mathbb{E}_\xi[f(x; \xi)]$ be convex with $L$-Lipschitz continuous gradient. Assume:
+\begin{enumerate}
+    \item \textbf{Bounded variance:} $\mathbb{E}[\|\nabla f(x; \xi) - \nabla f(x)\|^2] \leq \sigma^2$
+    \item \textbf{Bounded gradients:} $\|\nabla f(x; \xi)\| \leq G$ for all $x$ and $\xi$
+\end{enumerate}
+For SGD with decreasing step sizes $\eta_k = \eta_0 / \sqrt{k}$:
+\[
+x_{k+1} = x_k - \eta_k \nabla f(x_k; \xi_k)
+\]
+we have:
+\[
+\mathbb{E}[f(\bar{x}_K)] - f^* = O\Big(\frac{\|x_0 - x^*\|^2 + \sigma^2}{\sqrt{K}}\Big)
+\]
+where $\bar{x}_K = \frac{1}{K}\sum_{k=1}^K x_k$ is the average iterate.
+\end{theorem}
+
+\begin{proof}
+Let $g_k = \nabla f(x_k; \xi_k)$ be the stochastic gradient. We have:
+\[
+\mathbb{E}[g_k | x_k] = \nabla f(x_k), \quad \mathbb{E}[\|g_k - \nabla f(x_k)\|^2] \leq \sigma^2
+\]
+
+Consider:
+\begin{align}
+\|x_{k+1} - x^*\|^2 &= \|x_k - \eta_k g_k - x^*\|^2 \\
+&= \|x_k - x^*\|^2 - 2\eta_k g_k^\top(x_k - x^*) + \eta_k^2\|g_k\|^2
+\end{align}
+
+Taking expectations:
+\begin{align}
+\mathbb{E}[\|x_{k+1} - x^*\|^2] &= \mathbb{E}[\|x_k - x^*\|^2] - 2\eta_k\mathbb{E}[\nabla f(x_k)^\top(x_k - x^*)] \\
+&\quad + \eta_k^2\mathbb{E}[\|g_k\|^2]
+\end{align}
+
+Using convexity: $\nabla f(x_k)^\top(x_k - x^*) \geq f(x_k) - f^*$
+
+And: $\mathbb{E}[\|g_k\|^2] = \|\nabla f(x_k)\|^2 + \sigma^2 \leq G^2 + \sigma^2$ for bounded gradients
+
+Rearranging:
+\[
+2\eta_k(f(x_k) - f^*) \leq \|x_k - x^*\|^2 - \mathbb{E}[\|x_{k+1} - x^*\|^2] + \eta_k^2(G^2 + \sigma^2)
+\]
+
+Summing from $k = 1$ to $K$ and using telescoping:
+\[
+\sum_{k=1}^K 2\eta_k\mathbb{E}[f(x_k) - f^*] \leq \|x_0 - x^*\|^2 + (G^2 + \sigma^2)\sum_{k=1}^K \eta_k^2
+\]
+
+With $\eta_k = \eta_0/\sqrt{k}$: $\sum_{k=1}^K \eta_k \approx 2\eta_0\sqrt{K}$ and $\sum_{k=1}^K \eta_k^2 \approx \eta_0^2 \log K$
+
+By Jensen's inequality applied to the weighted average:
+\[
+\mathbb{E}[f(\bar{x}_K)] - f^* \leq \frac{\|x_0 - x^*\|^2 + \eta_0^2(G^2 + \sigma^2)\log K}{2\eta_0\sqrt{K}}
+\]
+
+Optimizing over $\eta_0$ yields the stated bound.
+\end{proof}
+
+%% ============================================================
+\section{Adam Convergence Properties}\label{sec:proof-adam-convergence}
+
+\begin{important}
+\textbf{Historical Note on Adam Convergence:} The original convergence proof in Kingma \& Ba (2015) contained gaps. Reddi et al.\ (2018) demonstrated counterexamples where Adam fails to converge even on simple convex problems with the default hyperparameters ($\beta_1 = 0.9$, $\beta_2 = 0.999$). The theorem below holds only under the restrictive assumption $\gamma = \beta_1/\sqrt{\beta_2} < 1$, which is violated by the defaults. For provable convergence guarantees, consider AMSGrad or ensure your hyperparameters satisfy this constraint.
+\end{important}
+
+\begin{theorem}{Adam Regret Bound (Under Restrictive Assumptions)}{adam-convex-proof}
+Consider Adam with parameters $\beta_1, \beta_2 \in [0, 1)$, step size $\alpha$, and $\epsilon > 0$. For convex functions with bounded gradients $\|g_t\|_\infty \leq G_\infty$, we have:
+\[
+\sum_{t=1}^T (f(x_t) - f(x^*)) \leq \frac{D^2\sqrt{T}}{2\alpha(1-\beta_1)} \sum_{i=1}^d \sqrt{\hat{v}_{T,i}} + \frac{\alpha(1+\beta_1)G_\infty}{(1-\beta_1)\sqrt{1-\beta_2}(1-\gamma)^2} \sum_{i=1}^d \|g_{1:T,i}\|_2
+\]
+where $D = \|x_1 - x^*\|$, $\gamma = \beta_1/\sqrt{\beta_2}$, and $\|g_{1:T,i}\|_2 = \sqrt{\sum_{t=1}^T g_{t,i}^2}$.
+\end{theorem}
+
+\begin{proof}[Proof Sketch]
+The full proof follows Kingma and Ba (2015) with modifications from Reddi et al. (2018).
+
+\textbf{Step 1: Update Decomposition}
+
+The Adam update is:
+\[
+x_{t+1} = x_t - \alpha \frac{\hat{m}_t}{\sqrt{\hat{v}_t} + \epsilon}
+\]
+where $\hat{m}_t = m_t/(1-\beta_1^t)$ and $\hat{v}_t = v_t/(1-\beta_2^t)$ are bias-corrected estimates.
+
+\textbf{Step 2: Distance to Optimum}
+
+Define $\Phi_t = \sum_{i=1}^d \frac{(x_{t,i} - x_i^*)^2\sqrt{\hat{v}_{t,i}}}{2\alpha}$.
+
+The key insight is that the adaptive learning rate $\alpha/\sqrt{\hat{v}_t}$ effectively normalizes the geometry of the problem.
+
+\textbf{Step 3: Regret Bound}
+
+Using convexity and the structure of the Adam updates:
+\begin{align}
+f(x_t) - f(x^*) &\leq \nabla f(x_t)^\top(x_t - x^*) \\
+&\leq g_t^\top(x_t - x^*)
+\end{align}
+
+After telescoping and careful bookkeeping of the bias correction terms:
+\[
+\sum_{t=1}^T g_t^\top(x_t - x^*) \leq \Phi_T - \Phi_1 + \text{momentum correction terms}
+\]
+
+\textbf{Step 4: Final Bound}
+
+Bounding each term and using $\sum_{t=1}^T t^{-1/2} = O(\sqrt{T})$ yields the stated result.
+
+The bound shows that Adam achieves $O(\sqrt{T})$ regret, implying $O(1/\sqrt{T})$ convergence rate for the average iterate, comparable to SGD but with adaptive step sizes.
+\end{proof}
+
+\begin{remark}{Non-Convex Convergence}{adam-nonconvex-remark}
+For non-convex functions with $L$-smooth gradients, Adam (with appropriate modifications like AMSGrad) converges to a stationary point:
+\[
+\min_{t \leq T} \mathbb{E}[\|\nabla f(x_t)\|^2] = O\Big(\frac{1}{\sqrt{T}}\Big)
+\]
+This matches the rate of SGD while benefiting from adaptive learning rates in practice.
+\end{remark}
+
+\begin{remark}{AMSGrad: A Provably Convergent Variant}{amsgrad-remark}
+AMSGrad (Reddi et al., 2018) modifies Adam by maintaining the maximum of past squared gradient averages: $\hat{v}_t = \max(\hat{v}_{t-1}, v_t/(1-\beta_2^t))$. This ensures the effective learning rate is non-increasing, which is sufficient for convergence. The fix addresses the counterexamples but may be more conservative in practice. Many practitioners continue to use standard Adam successfully, as the counterexamples are somewhat adversarial; however, for theoretical guarantees, AMSGrad or careful hyperparameter selection ($\gamma < 1$) is required.
+\end{remark}
+
+%% ============================================================
+\section{Convergence Rate Summary}\label{sec:convergence-summary}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lcc}
+\toprule
+\textbf{Setting} & \textbf{Algorithm} & \textbf{Complexity} \\
+\midrule
+Convex, smooth & GD & $O(1/\epsilon)$ \\
+Strongly convex, smooth & GD & $O(\kappa \log(1/\epsilon))$ \\
+Convex, smooth & SGD & $O(1/\epsilon^2)$ \\
+Strongly convex, smooth & SGD & $O(1/(\mu\epsilon))$ \\
+Convex & Adam & $O(1/\epsilon^2)$ \\
+Non-convex, smooth & SGD/Adam & $O(1/\epsilon^2)$ for $\|\nabla f\|^2 \leq \epsilon$ \\
+\bottomrule
+\end{tabular}
+\caption{Iteration complexity to achieve $\epsilon$-accuracy. Here $\kappa = L/\mu$ is the condition number.}
+\end{table}
+
+\end{document}

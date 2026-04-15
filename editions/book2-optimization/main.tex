@@ -1,0 +1,180 @@
+%==============================================================================
+%  THE AI ENGINEER'S LIBRARY - BOOK 2
+%  Optimization for AI: From Gradient Descent to Modern Optimizers
+%  Main Document
+%  Author: Dr. Vijay Raghavan
+%==============================================================================
+
+\documentclass[12pt,twoside,openright]{book}
+
+%------------------------------------------------------------------------------
+%  CONDITIONAL COMPILATION FLAG
+%------------------------------------------------------------------------------
+\newcommand{\BOOKTWO}{}  % Flag for Book 2 conditional compilation
+
+%------------------------------------------------------------------------------
+%  CUSTOM STYLE PACKAGES
+%------------------------------------------------------------------------------
+\usepackage{../../styles/book-style}      % Main book styling
+\usepackage{../../styles/theorems}        % Theorem environments
+\usepackage{../../styles/code-style}      % Code listings
+
+%------------------------------------------------------------------------------
+%  SERIES AND BOOK METADATA
+%------------------------------------------------------------------------------
+\newcommand{\SeriesName}{The AI Engineer's Library}
+\newcommand{\BookTitle}{Optimization for AI}
+\newcommand{\BookSubtitle}{From Gradient Descent to Modern Optimizers}
+\newcommand{\BookNumber}{2}
+\newcommand{\BookAuthor}{Dr. Vijay Raghavan}
+\newcommand{\BookYear}{2026}
+
+%------------------------------------------------------------------------------
+%  CUSTOMIZE FOOTER FOR THIS BOOK
+%------------------------------------------------------------------------------
+\fancyfoot[RE,LO]{\small\textit{\BookTitle}}
+
+%------------------------------------------------------------------------------
+%  PDF ACCESSIBILITY
+%------------------------------------------------------------------------------
+% PDF Accessibility - requires TeX Live 2022+ or recent MiKTeX
+% The [tagged] option generates tagged PDF structure for screen readers
+% NOTE: accessibility package conflicts with amsthm (\@opargbegintheorem undefined)
+% Full PDF tagging requires post-processing with Adobe Acrobat Pro or axesPDF
+% \usepackage[tagged]{accessibility}
+
+% For accessible figure descriptions (tooltips)
+\usepackage{pdfcomment}
+
+%------------------------------------------------------------------------------
+%  HYPERREF SETUP (load last among packages)
+%------------------------------------------------------------------------------
+\usepackage{hyperref}
+\hypersetup{
+    pdftitle={\BookTitle: \BookSubtitle},
+    pdfauthor={\BookAuthor},
+    pdfsubject={Optimization for AI, Gradient Descent, Modern Optimizers},
+    pdfkeywords={convex optimization, stochastic optimization, gradient descent,
+                 Adam, momentum, regularization, loss functions, convergence analysis,
+                 machine learning optimization, deep learning optimization},
+    pdfcreator={LaTeX with hyperref},
+    pdfproducer={\SeriesName{} - Book \BookNumber},
+    colorlinks=true,
+    linkcolor=linkblue,
+    citecolor=citegreen,
+    urlcolor=urlpurple,
+    bookmarks=true,
+    bookmarksnumbered=true,
+    bookmarksopen=true,
+    bookmarksopenlevel=2,
+    pdflang={en-US}
+}
+
+%------------------------------------------------------------------------------
+%  DOCUMENT BEGIN
+%------------------------------------------------------------------------------
+\begin{document}
+
+%------------------------------------------------------------------------------
+%  FRONT MATTER
+%------------------------------------------------------------------------------
+\frontmatter
+
+% Title Page
+\subfile{frontmatter/titlepage}
+
+% Endorsements removed - anonymous endorsements hurt credibility
+% \subfile{frontmatter/endorsements}
+
+% Copyright Page
+\input{../../shared/copyright}
+
+% Preface
+\subfile{frontmatter/preface}
+
+% Mathematical Recap
+\subfile{frontmatter/math-recap}
+
+% Learning Outcomes
+\subfile{frontmatter/outcomes}
+
+% How to Use This Book
+\subfile{frontmatter/howtouse}
+
+% Acknowledgments
+\subfile{frontmatter/acknowledgments}
+
+% Table of Contents
+\tableofcontents
+
+% List of Figures
+\listoffigures
+\addcontentsline{toc}{chapter}{List of Figures}
+
+% List of Tables
+\listoftables
+\addcontentsline{toc}{chapter}{List of Tables}
+
+%------------------------------------------------------------------------------
+%  MAIN MATTER
+%------------------------------------------------------------------------------
+\mainmatter
+
+%==============================================================================
+%  PART I: OPTIMIZATION THEORY
+%==============================================================================
+\part{Optimization Theory}
+\label{part:optimization}
+
+% Reset chapter counter so Chapter 9 becomes Chapter 1
+\setcounter{chapter}{0}
+
+\subfile{../../chapters/part2/ch09-convex-optimization}
+\subfile{../../chapters/part2/ch10-stochastic-optimization}
+\subfile{../../chapters/part2/ch11-gradient-descent}
+\subfile{../../chapters/part2/ch12-advanced-optimizers}
+\subfile{../../chapters/part2/ch13-regularization}
+\subfile{../../chapters/part2/ch14-loss-functions}
+\subfile{../../chapters/part2/ch15-convergence-analysis}
+
+% Part Synthesis
+\subfile{../../chapters/part2/part2-synthesis}
+
+% Capstone Project: Optimizer Showdown
+\subfile{../../chapters/part2/capstone-optimizers}
+
+%------------------------------------------------------------------------------
+%  APPENDICES
+%------------------------------------------------------------------------------
+\appendix
+\part*{Appendices}
+\addcontentsline{toc}{part}{Appendices}
+
+\subfile{backmatter/appendix-proofs}
+\subfile{backmatter/appendix-exercises}
+\subfile{backmatter/appendix-recipes}
+\subfile{backmatter/appendix-cheatsheet}
+
+%------------------------------------------------------------------------------
+%  BACK MATTER
+%------------------------------------------------------------------------------
+\backmatter
+
+% Glossary
+\subfile{backmatter/glossary}
+
+% Further Reading
+\subfile{backmatter/further-reading}
+
+% Bibliography
+\bibliographystyle{plainnat}
+\bibliography{../../references}
+\addcontentsline{toc}{chapter}{Bibliography}
+
+% Index
+\printindex
+
+% About the Series
+\subfile{backmatter/about-series}
+
+\end{document}

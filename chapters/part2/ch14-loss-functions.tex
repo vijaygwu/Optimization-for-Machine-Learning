@@ -1,0 +1,1355 @@
+%==============================================================================
+%  CHAPTER 14: Loss Functions
+%  Part II: Optimization Theory
+%==============================================================================
+\documentclass[../../main.tex]{subfiles}
+
+\begin{document}
+
+\chapter{Loss Functions and Optimization Objectives}
+\label{ch:loss-functions}
+
+A change as simple as switching from mean squared error to cross-entropy can transform a struggling classifier into a high-performing one. The loss function defines what your model learns. Choose poorly, and no amount of architecture engineering will save you.
+
+\begin{whycare}
+Loss function design is where ML theory meets practice. Choosing the right loss for your problem---classification, regression, ranking, generation---often matters more than model architecture. This is where you encode what ``good'' means.
+\end{whycare}
+
+\begin{keyconcept}
+Loss functions quantify the discrepancy between model predictions and ground truth, serving as the objective that optimization algorithms minimize during training. The choice of loss function profoundly affects what a model learns, how it generalizes, and what behaviors it exhibits. This chapter explores the mathematical foundations and practical applications of optimization objectives across regression, classification, representation learning, and generative tasks---along with the critical frameworks for selecting, combining, and debugging loss functions in practice.
+\end{keyconcept}
+
+\begin{realworld}
+\textbf{Why This Matters:} The loss function defines what your model learns---RLHF uses custom losses to align AI with human values.
+
+\textbf{Real Example:} AI alignment techniques like Constitutional AI use specially designed loss functions to encourage helpful, harmless, and honest behavior in language models.
+
+\textbf{Scale:} Choosing cross-entropy vs MSE can mean the difference between 90\% and 95\% accuracy.
+\end{realworld}
+
+\begin{intuition}[What to Expect]
+This chapter answers a deceptively simple question: \textit{how do we measure whether a model is doing well?} The answer shapes everything:
+\begin{itemize}
+    \item \textbf{Loss vs.\ Metric}: Why we optimize cross-entropy but evaluate accuracy---and what can go wrong when these diverge
+    \item \textbf{Regression losses}: MSE, MAE, Huber---each encodes different assumptions about noise and outliers
+    \item \textbf{Classification losses}: Cross-entropy, hinge, focal---each trades off calibration, margin, and class imbalance differently
+    \item \textbf{Representation losses}: Contrastive, triplet---how do we learn embeddings when we don't have explicit targets?
+    \item \textbf{Selection frameworks}: How to choose, combine, and debug loss functions for your specific problem
+\end{itemize}
+The running theme: \textit{your model optimizes exactly what you measure}. Choose the wrong loss and your model learns the wrong thing, even if the architecture and data are perfect.
+\end{intuition}
+
+\begin{prerequisites}
+\textbf{Before reading this chapter, you should be comfortable with:}
+\begin{itemize}
+    \item Probability distributions, especially Gaussian and categorical (see Book~1, Chapter~3)
+    \item Cross-entropy and KL divergence from information theory (see Book~1, Chapter~4)
+    \item Basic optimization concepts (see Book~1, Chapter~8)
+\end{itemize}
+\textbf{Review if needed:} Book~1, Chapter~4 for entropy and cross-entropy, Book~1, Chapter~3 for MLE
+\end{prerequisites}
+
+%------------------------------------------------------------------------------
+% CRITICAL DISTINCTION: LOSS vs METRIC
+%------------------------------------------------------------------------------
+\begin{important}
+\textbf{Loss Functions vs.\ Evaluation Metrics: A Critical Distinction}
+
+Before diving into specific loss functions, understand this fundamental dichotomy:
+
+\begin{itemize}
+    \item \textbf{Loss function}: What we \emph{optimize} during training. Must be differentiable (or have useful subgradients) so gradient-based methods can minimize it.
+    \item \textbf{Metric}: What we \emph{actually care about}---accuracy, F1-score, BLEU, AUC, human preference. Often non-differentiable or discrete.
+\end{itemize}
+
+These are frequently \emph{different}. We optimize cross-entropy but evaluate accuracy. We minimize reconstruction loss but care about perceptual quality. We train on log-likelihood but deploy based on BLEU scores.
+
+This disconnect is called \textbf{surrogate loss optimization}\index{surrogate loss}: we optimize a tractable proxy (the loss) hoping it correlates with our true objective (the metric). The art of loss function design is choosing surrogates that align well with what we actually want.
+
+\textbf{Why not optimize the metric directly?}
+\begin{itemize}
+    \item Accuracy is a step function---gradient is zero almost everywhere
+    \item F1-score depends on a threshold and requires the full dataset to compute
+    \item BLEU involves discrete token matching with no smooth gradient
+    \item Human preference is expensive and non-differentiable
+\end{itemize}
+
+This chapter covers both the mathematical properties of common loss functions \emph{and} how to choose losses that best approximate your true evaluation objectives.
+\end{important}
+
+%------------------------------------------------------------------------------
+\section{Introduction: Why Loss Functions Matter}
+\label{sec:loss-intro}
+
+\begin{important}
+The loss function is the only thing your model actually optimizes. Everything else---architecture, regularization, hyperparameters---is in service of finding parameters that minimize the loss. If the loss doesn't capture what you truly care about, the model will find clever ways to minimize it that don't solve your actual problem.
+\end{important}
+
+At the heart of every machine learning system lies a loss function\index{loss function|textbf}\index{cost function|see{loss function}}\index{objective function|see{loss function}} (also called a cost function or objective function). Given a model $f_{\vect{\theta}}$ with parameters $\vect{\theta}$, a loss function $\mathcal{L}$ measures how poorly the model performs on a given task:
+\[
+    \mathcal{L}(\vect{\theta}) = \frac{1}{m} \sum_{i=1}^{m} \ell\left(f_{\vect{\theta}}(\vect{x}_i), y_i\right)
+\]
+where $\ell(\hat{y}, y)$ quantifies the error between prediction $\hat{y}$ and true target $y$.
+
+\begin{intuition}
+Think of the loss function as a teacher grading a student's work. A good loss function provides meaningful feedback: it penalizes mistakes proportionally to their severity and guides the student (model) toward the correct answers. The choice of grading scheme fundamentally shapes what the student learns to prioritize.
+\end{intuition}
+
+\begin{principle}
+The loss function encodes our preferences about what constitutes a good model. It must be carefully chosen to align with the true objective of the task, as the model will optimize exactly what we measure---nothing more, nothing less.
+\end{principle}
+
+\begin{table}[htbp]
+\centering
+\caption{Loss Function Selection Guide}
+\label{tab:loss-selection-guide}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Task} & \textbf{Loss Function} & \textbf{Why} \\
+\midrule
+Binary Classification & Binary Cross-Entropy & Probabilistic interpretation \\
+Multi-class Classification & Categorical Cross-Entropy & Softmax output \\
+Regression (normal errors) & MSE (L2 Loss) & Maximum likelihood for Gaussian \\
+Regression (outliers) & MAE (L1 Loss) or Huber & Robust to outliers \\
+Imbalanced Classification & Focal Loss & Down-weights easy examples \\
+Ranking / Retrieval & Triplet / Contrastive Loss & Learns relative ordering \\
+Generation (VAE) & ELBO = Recon + KL & Balances fidelity and diversity \\
+Segmentation & Dice Loss + CE & Handles class imbalance \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+%------------------------------------------------------------------------------
+\section{Regression Losses}
+\label{sec:regression-losses}
+
+Regression tasks involve predicting continuous values. The most common losses measure the distance between predictions and targets.
+
+\subsection{Mean Squared Error (MSE)}
+
+\begin{definition}{Mean Squared Error}{mse-def}
+The \textbf{Mean Squared Error}\index{mean squared error|textbf}\index{MSE|see{mean squared error}}\index{L2 loss|see{mean squared error}} (MSE), also called L2 loss or quadratic loss, is defined as:
+\[
+    \mathcal{L}_{\text{MSE}} = \frac{1}{m} \sum_{i=1}^{m} (y_i - \hat{y}_i)^2 = \frac{1}{m} \norm{\vect{y} - \hat{\vect{y}}}_2^2
+\]
+For a single prediction, $\ell(y, \hat{y}) = (y - \hat{y})^2$.
+\end{definition}
+
+\textbf{Properties of MSE:}
+\begin{itemize}
+    \item \textbf{Convex}: Has a unique global minimum (for linear models)
+    \item \textbf{Differentiable}: Smooth gradients everywhere
+    \item \textbf{Penalizes large errors heavily}: Squared term amplifies outliers
+    \item \textbf{Scale-sensitive}: Units are squared units of the target
+\end{itemize}
+
+\begin{theorem}{MSE and Gaussian Likelihood}{mse-gaussian}
+Minimizing MSE is equivalent to maximum likelihood estimation\index{maximum likelihood estimation!and MSE} under the assumption that targets follow a Gaussian distribution:
+\[
+    y = f_{\vect{\theta}}(\vect{x}) + \epsilon, \quad \epsilon \sim \mathcal{N}(0, \sigma^2)
+\]
+The negative log-likelihood is:
+\[
+    -\log p(y \given \vect{x}, \vect{\theta}) = \frac{(y - f_{\vect{\theta}}(\vect{x}))^2}{2\sigma^2} + \text{const}
+\]
+Minimizing over $\vect{\theta}$ is equivalent to minimizing MSE.
+\end{theorem}
+
+\begin{proof}
+Under the Gaussian noise assumption, the likelihood for observation $(x_i, y_i)$ is:
+\[
+    p(y_i \given \vect{x}_i, \vect{\theta}) = \frac{1}{\sqrt{2\pi\sigma^2}} \exp\left(-\frac{(y_i - f_{\vect{\theta}}(\vect{x}_i))^2}{2\sigma^2}\right)
+\]
+Taking the negative log and summing over all samples:
+\[
+    -\log \prod_i p(y_i \given \vect{x}_i, \vect{\theta}) = \frac{1}{2\sigma^2} \sum_i (y_i - f_{\vect{\theta}}(\vect{x}_i))^2 + \frac{m}{2}\log(2\pi\sigma^2)
+\]
+Since $\sigma^2$ is constant, minimizing this is equivalent to minimizing the sum of squared errors.
+\end{proof}
+
+\begin{pythoncode}
+import torch
+import torch.nn as nn
+
+# PyTorch MSE Loss
+mse_loss = nn.MSELoss()
+
+# Manual implementation
+def mse_loss_manual(y_pred, y_true):
+    return torch.mean((y_pred - y_true) ** 2)
+
+# Gradient: d/d(y_pred) MSE = 2/m * (y_pred - y_true)
+def mse_gradient(y_pred, y_true):
+    return 2 * (y_pred - y_true) / y_pred.numel()
+\end{pythoncode}
+
+\subsection{Mean Absolute Error (MAE)}
+
+\begin{definition}{Mean Absolute Error}{mae-def}
+The \textbf{Mean Absolute Error}\index{mean absolute error|textbf}\index{MAE|see{mean absolute error}}\index{L1 loss|see{mean absolute error}} (MAE), also called L1 loss, is defined as:
+\[
+    \mathcal{L}_{\text{MAE}} = \frac{1}{m} \sum_{i=1}^{m} |y_i - \hat{y}_i| = \frac{1}{m} \norm{\vect{y} - \hat{\vect{y}}}_1
+\]
+\end{definition}
+
+\textbf{Properties of MAE:}
+\begin{itemize}
+    \item \textbf{Robust to outliers}: Linear penalty does not amplify large errors
+    \item \textbf{Non-differentiable at zero}: Gradient undefined when $y = \hat{y}$
+    \item \textbf{Constant gradients}: Gradient magnitude is constant regardless of error size
+\end{itemize}
+
+\begin{theorem}{MAE and Laplace Likelihood}{mae-laplace}
+Minimizing MAE is equivalent to maximum likelihood estimation under a Laplace\index{Laplace distribution} (double exponential) noise model:
+\[
+    p(y \given \vect{x}, \vect{\theta}) = \frac{1}{2b} \exp\left(-\frac{|y - f_{\vect{\theta}}(\vect{x})|}{b}\right)
+\]
+where $b$ is the scale parameter.
+\end{theorem}
+
+\subsection{Huber Loss}
+
+\begin{definition}{Huber Loss}{huber-def}
+The \textbf{Huber loss}\index{Huber loss|textbf} combines the best properties of MSE and MAE:
+\[
+    \ell_\delta(y, \hat{y}) = \begin{cases}
+        \frac{1}{2}(y - \hat{y})^2 & \text{if } |y - \hat{y}| \leq \delta \\[4pt]
+        \delta |y - \hat{y}| - \frac{1}{2}\delta^2 & \text{otherwise}
+    \end{cases}
+\]
+where $\delta$ is a threshold hyperparameter.
+\end{definition}
+
+\begin{intuition}
+Huber loss behaves like MSE for small errors (providing smooth gradients) and like MAE for large errors (providing robustness to outliers). The threshold $\delta$ controls the transition between these regimes.
+\end{intuition}
+
+Figure~\ref{fig:regression-losses} compares these three regression loss functions.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+    width=12cm, height=7cm,
+    xlabel={Error $(y - \hat{y})$},
+    ylabel={Loss},
+    xmin=-4, xmax=4, ymin=0, ymax=5,
+    grid=major,
+    grid style={gray!20, thin},
+    legend pos=north west,
+    legend style={font=\small, fill=white, fill opacity=0.9, draw=gray!40, rounded corners=2pt},
+    tick label style={font=\small},
+    label style={font=\small},
+    every axis plot/.append style={line width=1.2pt}
+]
+\addplot[primaryblue, domain=-4:4, samples=100] {x^2};
+\addlegendentry{MSE}
+\addplot[primaryred, domain=-4:4, samples=100] {abs(x)};
+\addlegendentry{MAE}
+\addplot[primarygreen, domain=-4:-1, samples=50] {abs(x) - 0.5};
+\addplot[primarygreen, domain=-1:1, samples=50] {0.5*x^2};
+\addplot[primarygreen, domain=1:4, samples=50] {abs(x) - 0.5};
+\addlegendentry{Huber ($\delta=1$)}
+\end{axis}
+\end{tikzpicture}
+\caption{Comparison of MSE, MAE, and Huber loss functions. Huber loss transitions from quadratic to linear at $|e| = \delta$.}
+\label{fig:regression-losses}
+\end{figure}
+
+%------------------------------------------------------------------------------
+\section{Classification Losses}
+\label{sec:classification-losses}
+
+While regression losses measure distance in a continuous output space, classification presents a fundamentally different challenge: predicting discrete categories. We cannot simply measure ``how far'' a prediction is from the true class---instead, we must reason about probability distributions over a finite set of outcomes. This shift from continuous to discrete targets requires entirely different loss functions, ones that naturally handle probability distributions and provide meaningful gradients even when outputs are constrained to a simplex.
+
+Classification tasks involve predicting discrete categories. The losses must handle probability distributions and discrete targets.
+
+\subsection{Binary Cross-Entropy}
+
+\begin{definition}{Binary Cross-Entropy Loss}{bce-def}
+\index{binary cross-entropy|textbf}\index{BCE|see{binary cross-entropy}}For binary classification with predicted probability $\hat{p} \in (0, 1)$ and true label $y \in \{0, 1\}$:
+\[
+    \mathcal{L}_{\text{BCE}} = -\frac{1}{m} \sum_{i=1}^{m} \left[ y_i \log \hat{p}_i + (1 - y_i) \log(1 - \hat{p}_i) \right]
+\]
+This can be written compactly as:
+\[
+    \ell(y, \hat{p}) = -y \log \hat{p} - (1-y) \log(1 - \hat{p})
+\]
+\end{definition}
+
+\begin{theorem}{BCE and Bernoulli MLE}{bce-mle}
+Binary cross-entropy is the negative log-likelihood of a Bernoulli distribution. If $y \sim \text{Bernoulli}(\hat{p})$, then:
+\[
+    p(y \given \hat{p}) = \hat{p}^y (1 - \hat{p})^{1-y}
+\]
+Taking the negative logarithm yields the BCE loss.
+\end{theorem}
+
+\begin{important}
+In practice, binary cross-entropy is computed from logits $z$ (pre-sigmoid outputs) for numerical stability:
+\[
+    \mathcal{L}_{\text{BCE}}(z, y) = \max(z, 0) - z \cdot y + \log(1 + e^{-|z|})
+\]
+This avoids computing $\log(\sigma(z))$ which can underflow for extreme values.
+\end{important}
+
+\begin{pythoncode}
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+# From probabilities (requires sigmoid output)
+bce_loss = nn.BCELoss()
+
+# From logits (numerically stable, recommended)
+bce_with_logits = nn.BCEWithLogitsLoss()
+
+# Manual stable implementation
+def binary_cross_entropy_stable(logits, targets):
+    """Numerically stable BCE from logits."""
+    max_val = torch.clamp(logits, min=0)
+    loss = max_val - logits * targets + torch.log(1 + torch.exp(-torch.abs(logits)))
+    return loss.mean()
+\end{pythoncode}
+
+\subsection{Categorical Cross-Entropy}
+
+\begin{definition}{Categorical Cross-Entropy Loss}{cce-def}
+\index{cross-entropy loss|textbf}\index{categorical cross-entropy|see{cross-entropy loss}}For $K$-class classification with predicted probabilities $\hat{\vect{p}} \in \Delta^{K-1}$ (probability simplex) and one-hot encoded true label $\vect{y}$:
+\[
+    \mathcal{L}_{\text{CE}} = -\frac{1}{m} \sum_{i=1}^{m} \sum_{k=1}^{K} y_{i,k} \log \hat{p}_{i,k}
+\]
+When $\vect{y}$ is a one-hot vector with $y_c = 1$ for the true class $c$:
+\[
+    \mathcal{L}_{\text{CE}} = -\frac{1}{m} \sum_{i=1}^{m} \log \hat{p}_{i,c_i}
+\]
+\end{definition}
+
+\begin{theorem}{Cross-Entropy and KL Divergence}{ce-kl}
+Cross-entropy between true distribution $p$ and predicted distribution $q$ decomposes as\index{KL divergence!and cross-entropy}:
+\[
+    H(p, q) = H(p) + \KL{p}{q}
+\]
+where $H(p) = -\sum_k p_k \log p_k$ is the entropy. For one-hot labels, $H(p) = 0$, so minimizing cross-entropy is equivalent to minimizing the KL divergence from predictions to targets.
+\end{theorem}
+
+\begin{definition}{Softmax with Cross-Entropy}{softmax-ce}
+\index{softmax!with cross-entropy}\index{log-sum-exp trick}In practice, we compute cross-entropy directly from logits $\vect{z} \in \R^K$:
+\[
+    \mathcal{L}_{\text{CE}}(\vect{z}, c) = -z_c + \log \sum_{k=1}^{K} e^{z_k}
+\]
+This combines softmax and cross-entropy in a numerically stable way using the log-sum-exp trick:
+\[
+    \log \sum_k e^{z_k} = z_{\max} + \log \sum_k e^{z_k - z_{\max}}
+\]
+\end{definition}
+
+\begin{pythoncode}
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+# CrossEntropyLoss combines LogSoftmax and NLLLoss
+# Input: logits (N, C), Target: class indices (N,)
+ce_loss = nn.CrossEntropyLoss()
+
+# Example usage
+logits = torch.randn(32, 10)  # Batch of 32, 10 classes
+targets = torch.randint(0, 10, (32,))  # Class indices
+loss = ce_loss(logits, targets)
+
+# Equivalent manual computation
+def cross_entropy_manual(logits, targets):
+    """
+    Categorical cross-entropy loss.
+
+    Args:
+        logits: (N, C) logits
+        targets: (N,) integer indices OR (N, C) one-hot
+    """
+    if targets.ndim == 2:
+        targets = torch.argmax(targets, dim=1)  # Convert one-hot to indices
+    log_probs = F.log_softmax(logits, dim=-1)
+    return F.nll_loss(log_probs, targets)
+\end{pythoncode}
+
+\subsection{Gradient of Softmax Cross-Entropy}
+
+\begin{theorem}{Softmax Cross-Entropy Gradient}{softmax-ce-grad}
+The gradient of cross-entropy loss with respect to logits has a remarkably simple form:
+\[
+    \pd{\mathcal{L}}{\vect{z}} = \hat{\vect{p}} - \vect{y}
+\]
+where $\hat{\vect{p}} = \softmax(\vect{z})$ and $\vect{y}$ is the one-hot target. For the true class $c$:
+\[
+    \pd{\mathcal{L}}{z_k} = \begin{cases}
+        \hat{p}_k - 1 & \text{if } k = c \\
+        \hat{p}_k & \text{if } k \neq c
+    \end{cases}
+\]
+\end{theorem}
+
+\begin{proof}
+Using the chain rule and the softmax Jacobian:
+\[
+    \pd{\hat{p}_i}{z_j} = \hat{p}_i (\delta_{ij} - \hat{p}_j)
+\]
+The cross-entropy is $\mathcal{L} = -\log \hat{p}_c$. Therefore:
+\[
+    \pd{\mathcal{L}}{z_j} = -\frac{1}{\hat{p}_c} \pd{\hat{p}_c}{z_j} = -\frac{1}{\hat{p}_c} \hat{p}_c (\delta_{cj} - \hat{p}_j) = \hat{p}_j - \delta_{cj}
+\]
+which equals $\hat{\vect{p}} - \vect{y}$ in vector form.
+\end{proof}
+
+\begin{intuition}
+The gradient $\hat{\vect{p}} - \vect{y}$ has an elegant interpretation: it pushes down the logits of incorrectly predicted classes (positive gradient) and pushes up the logit of the true class (negative gradient). The magnitude is proportional to the prediction error.
+\end{intuition}
+
+\begin{aha}
+Cross-entropy penalizes confident wrong predictions heavily. If your model says 99\% class A but truth is class B, the loss is huge ($-\log(0.01) \approx 4.6$). MSE would barely notice ($0.99^2 \approx 0.98$). That's why cross-entropy trains classifiers faster.
+\end{aha}
+
+%------------------------------------------------------------------------------
+\subsection{Loss Function Design and Optimization}
+\label{sec:loss-design-optimization}
+
+The choice of loss function fundamentally affects not just \textit{what} the model learns, but \textit{how efficiently} it learns through the gradient magnitudes it produces.
+
+\begin{keyconcept}
+\textbf{Gradient Magnitude Comparison: Cross-Entropy vs MSE}
+
+Consider a confident wrong prediction: model outputs $\hat{p} = 0.99$ for class A, but the true label is class B (so the correct probability should be 0).
+
+\textbf{Cross-entropy gradient:} The gradient with respect to the logit is $\hat{p} - y = 0.99 - 0 = 0.99$. This is a strong signal pushing the model to correct its mistake.
+
+\textbf{MSE gradient:} For MSE with sigmoid output, the gradient includes the sigmoid derivative $\sigma'(z) = \hat{p}(1-\hat{p})$. When $\hat{p} = 0.99$, this factor is $0.99 \times 0.01 = 0.0099$. The effective gradient is approximately $2 \times 0.99 \times 0.0099 \approx 0.02$.
+
+\textbf{The ratio:} Cross-entropy provides roughly $0.99 / 0.02 \approx 50\times$ larger gradient for confident wrong predictions. This is why cross-entropy trains classifiers dramatically faster---it provides strong corrective signals exactly when the model is confidently wrong.
+\end{keyconcept}
+
+\begin{intuition}
+The sigmoid function saturates at extreme values: its derivative approaches zero as outputs approach 0 or 1. MSE gradients must flow through this derivative, so they vanish for confident predictions (right or wrong). Cross-entropy's logarithm exactly cancels this saturation---$\frac{d}{dp}(-\log p) = -1/p$ grows larger as $p$ shrinks, maintaining strong gradients for low-probability events.
+\end{intuition}
+
+\begin{principle}
+\textbf{Loss function design affects optimization dynamics.} Beyond the final optimum, the loss function shapes the gradient landscape:
+\begin{itemize}
+    \item \textbf{Gradient magnitude}: How strongly does the loss push corrections? Cross-entropy maintains gradients for confident errors; MSE lets them vanish.
+    \item \textbf{Error weighting}: Does the loss treat all errors equally? Focal loss down-weights easy examples by factor $(1-\hat{p}_c)^\gamma$, focusing learning on hard cases.
+    \item \textbf{Calibration}: Does minimizing the loss produce well-calibrated probabilities? Cross-entropy encourages calibration; hinge loss does not.
+\end{itemize}
+\end{principle}
+
+\begin{example}{Focal Loss Reweighting}{focal-gradient-example}
+Focal loss modifies cross-entropy by adding a modulating factor: $\mathcal{L}_{\text{focal}} = -(1-\hat{p}_c)^\gamma \log \hat{p}_c$.
+
+For $\gamma = 2$:
+\begin{itemize}
+    \item Easy example ($\hat{p}_c = 0.9$): weight $(1-0.9)^2 = 0.01$, loss reduced by 100$\times$
+    \item Hard example ($\hat{p}_c = 0.5$): weight $(1-0.5)^2 = 0.25$, loss reduced by 4$\times$
+    \item Very hard example ($\hat{p}_c = 0.1$): weight $(1-0.1)^2 = 0.81$, nearly full loss
+\end{itemize}
+The gradient contribution from hard examples is thus $0.81/0.01 = 81\times$ larger relative to easy examples. This prevents easy negatives from dominating training in imbalanced detection tasks.
+\end{example}
+
+\begin{checkpoint}
+Why is cross-entropy preferred over MSE for classification? Compare the gradients when the model is confident but wrong.
+\end{checkpoint}
+
+\begin{commonmistakes}
+\begin{itemize}
+    \item \textbf{Mistake:} Using MSE loss for classification problems
+
+    \textbf{Why it's wrong:} MSE gradients vanish when predictions are confident but wrong ($\hat{y} \approx 0$ or $1$). Cross-entropy provides strong gradients to correct mistakes regardless of confidence level.
+
+    \textbf{Correct understanding:} Use cross-entropy for classification (outputs are probabilities) and MSE for regression (outputs are continuous values). The loss function should match your output interpretation.
+\end{itemize}
+\end{commonmistakes}
+
+%------------------------------------------------------------------------------
+\section{Hinge Loss and Margin-Based Losses}
+\label{sec:hinge-loss}
+
+Margin-based losses enforce a separation between classes rather than calibrated probabilities, as shown in Figure~\ref{fig:margin-losses}.
+
+\begin{definition}{Hinge Loss}{hinge-def}
+\index{hinge loss|textbf}For binary classification with labels $y \in \{-1, +1\}$ and raw score $s \in \R$:
+\[
+    \ell_{\text{hinge}}(y, s) = \max(0, 1 - y \cdot s)
+\]
+The loss is zero when $y \cdot s \geq 1$ (correct prediction with sufficient margin).
+\end{definition}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+    width=12cm, height=7cm,
+    xlabel={Margin $y \cdot s$},
+    ylabel={Loss},
+    xmin=-2, xmax=3, ymin=0, ymax=3,
+    grid=major,
+    grid style={gray!20, thin},
+    legend pos=north east,
+    legend style={font=\small, fill=white, fill opacity=0.9, draw=gray!40, rounded corners=2pt},
+    tick label style={font=\small},
+    label style={font=\small},
+    every axis plot/.append style={line width=1.2pt}
+]
+\addplot[primaryblue, domain=-2:1] {1-x};
+\addplot[primaryblue, domain=1:3] {0};
+\addlegendentry{Hinge}
+\addplot[primaryred, domain=-2:3, samples=100] {ln(1+exp(-x))/ln(2)};
+\addlegendentry{Logistic/$\ln 2$}
+\addplot[primarygreen, domain=-2:3, samples=100] {max(0, 1-x)^2};
+\addlegendentry{Squared Hinge}
+\end{axis}
+\end{tikzpicture}
+\caption{Margin-based losses. Hinge loss has a margin of 1, beyond which the loss is zero. The logistic loss $\log(1+e^{-m})$ is divided by $\ln 2$ to normalize it to pass through $(0, 1)$ like hinge loss, enabling direct comparison of the curves.}
+\label{fig:margin-losses}
+\end{figure}
+
+\begin{keyconcept}
+Hinge loss is the foundation of Support Vector Machines (SVMs)\index{support vector machine|seealso{hinge loss}}. Unlike cross-entropy, it does not require probabilistic outputs and focuses on finding the maximum-margin decision boundary. Once a point is correctly classified with sufficient margin, it incurs zero loss and contributes no gradient.
+\end{keyconcept}
+
+\begin{definition}{Multiclass Hinge Loss}{multiclass-hinge}
+For $K$ classes with scores $\vect{s} \in \R^K$ and true class $c$:
+\[
+    \ell_{\text{hinge}}(\vect{s}, c) = \sum_{k \neq c} \max(0, s_k - s_c + 1)
+\]
+This penalizes any incorrect class having a score within margin 1 of the correct class.\index{multiclass hinge loss}
+\end{definition}
+
+%------------------------------------------------------------------------------
+\section{Focal Loss for Class Imbalance}
+\label{sec:focal-loss}
+
+\begin{definition}{Focal Loss}{focal-def}
+\textbf{Focal loss}\index{focal loss|textbf}\index{class imbalance|seealso{focal loss}} (Lin et al., 2017) down-weights easy examples to focus learning on hard cases:
+\[
+    \mathcal{L}_{\text{focal}} = -\frac{1}{m} \sum_{i=1}^{m} (1 - \hat{p}_{c_i})^\gamma \log \hat{p}_{c_i}
+\]
+where $\gamma \geq 0$ is the focusing parameter and $\hat{p}_{c_i}$ is the predicted probability for the true class.
+\end{definition}
+
+\begin{intuition}
+When $\gamma = 0$, focal loss reduces to standard cross-entropy. For $\gamma > 0$, well-classified examples (high $\hat{p}_c$) have their loss down-weighted by factor $(1 - \hat{p}_c)^\gamma$. This addresses class imbalance by preventing easy negatives from dominating the gradient.
+\end{intuition}
+
+\begin{example}{Focal Loss Weighting}{focal-example}
+Consider $\gamma = 2$ and two examples:
+\begin{itemize}
+    \item Easy example: $\hat{p}_c = 0.9$ gives weight $(1-0.9)^2 = 0.01$
+    \item Hard example: $\hat{p}_c = 0.1$ gives weight $(1-0.1)^2 = 0.81$
+\end{itemize}
+The hard example receives 81x more weight, focusing the model on challenging cases.
+\end{example}
+
+\begin{keyconcept}
+\textbf{Tuning the focusing parameter $\gamma$:} Start with $\gamma=2$ (the original paper's recommendation). For extreme class imbalance ($>$100:1 ratio), try $\gamma=3$--$5$. If the minority class is being ignored entirely, \emph{lower} $\gamma$ to 1 or add class weights. Always monitor per-class metrics, not just overall accuracy.
+\end{keyconcept}
+
+\begin{definition}{Focal Loss with Class Balancing}{focal-balanced}
+The full focal loss with class balancing:
+\[
+    \mathcal{L}_{\text{focal}} = -\alpha_c (1 - \hat{p}_c)^\gamma \log \hat{p}_c
+\]
+where $\alpha_c$ is a class-dependent weight (typically inverse class frequency).
+\end{definition}
+
+\begin{pythoncode}
+import torch
+import torch.nn.functional as F
+
+def focal_loss(logits, targets, gamma=2.0, alpha=None):
+    """
+    Focal loss for imbalanced classification.
+
+    Args:
+        logits: Raw predictions (N, C)
+        targets: Class indices (N,)
+        gamma: Focusing parameter
+        alpha: Class weights (C,) or None
+    """
+    ce_loss = F.cross_entropy(logits, targets, reduction='none')
+    # Clamp for numerical stability: avoid log(0) and (1-pt)^gamma overflow
+    pt = torch.clamp(torch.exp(-ce_loss), min=1e-7, max=1.0)  # pt = p_c for true class
+
+    focal_weight = (1 - pt) ** gamma
+
+    if alpha is not None:
+        alpha_weight = alpha[targets]
+        focal_weight = alpha_weight * focal_weight
+
+    return (focal_weight * ce_loss).mean()
+\end{pythoncode}
+
+\begin{warstory}
+\textbf{How Focal Loss Revolutionized Object Detection at Facebook}
+
+In 2017, Facebook AI Research faced a stubborn problem: their object detectors performed poorly on rare object classes. A single image might contain one car but hundreds of background patches---the detector was overwhelmed by easy negatives.
+
+Tsung-Yi Lin and colleagues invented \textbf{focal loss} specifically for their RetinaNet detector. The key observation: in a typical image, 99.9\% of candidate regions are easy negatives (clearly not objects). Standard cross-entropy weights all examples equally, so the gradient is dominated by these easy cases that the model already classifies correctly with 99\%+ confidence.
+
+Focal loss introduced the $(1 - p_t)^\gamma$ weighting factor. With $\gamma = 2$ (their recommended default), an example classified with 90\% confidence contributes only 1\% of the gradient it would under standard cross-entropy. Meanwhile, hard examples (50\% confidence) contribute 25\% of their standard gradient---a 25$\times$ relative increase.
+
+The results were dramatic: RetinaNet with focal loss achieved state-of-the-art performance on the COCO detection benchmark~\cite{lin2017focal}, surpassing all previous one-stage detectors and matching two-stage detectors like Faster R-CNN while being significantly faster. Focal loss is now standard in object detection and has been adopted for any classification task with severe class imbalance.
+
+\textbf{Lesson:} When your training signal is drowned out by easy examples, change the loss function to focus on what matters. Small loss function modifications can have outsized impact.
+\end{warstory}
+
+\begin{checkpoint}
+What is focal loss? When would you use it instead of standard cross-entropy?
+\end{checkpoint}
+
+%------------------------------------------------------------------------------
+\section{Contrastive Losses for Representation Learning}
+\label{sec:contrastive-losses}
+
+The losses we have examined so far---regression, classification, and margin-based---all assume we have explicit targets: a number to predict, a class to identify, or a boundary to enforce. But what if we want to learn \emph{representations} without explicit labels? What if our goal is not to predict a specific output but to organize an embedding space so that similar items cluster together and dissimilar items stay apart? This is the domain of \textbf{metric learning}\index{metric learning}, where losses operate on relationships between examples rather than on individual predictions. These contrastive objectives have become foundational to modern self-supervised learning, powering systems from face recognition to CLIP's vision-language alignment.
+
+Contrastive losses learn representations by comparing pairs or groups of examples.
+
+\subsection{Contrastive Loss}
+
+\begin{definition}{Contrastive Loss (Siamese Networks)}{contrastive-def}
+\index{contrastive loss|textbf}\index{Siamese network|seealso{contrastive loss}}For a pair of examples with embeddings $\vect{z}_1, \vect{z}_2$ and label $y \in \{0, 1\}$ indicating whether they are similar ($y=1$) or dissimilar ($y=0$):
+\[
+    \mathcal{L}_{\text{contrastive}} = y \cdot d(\vect{z}_1, \vect{z}_2)^2 + (1-y) \cdot \max(0, m - d(\vect{z}_1, \vect{z}_2))^2
+\]
+where $d(\vect{z}_1, \vect{z}_2) = \norm{\vect{z}_1 - \vect{z}_2}_2$ is the Euclidean distance and $m$ is the margin.
+\end{definition}
+
+\begin{intuition}
+For similar pairs ($y=1$), the loss encourages small distances. For dissimilar pairs ($y=0$), the loss is zero if the distance exceeds margin $m$, but penalizes the model if dissimilar examples are too close.
+\end{intuition}
+
+\subsection{Triplet Loss}
+
+\begin{definition}{Triplet Loss}{triplet-def}
+\index{triplet loss|textbf}Given an anchor $\vect{a}$, positive example $\vect{p}$ (same class), and negative example $\vect{n}$ (different class):
+\[
+    \mathcal{L}_{\text{triplet}} = \max\left(0, d(\vect{a}, \vect{p}) - d(\vect{a}, \vect{n}) + m\right)
+\]
+where $m > 0$ is the margin. The loss enforces:
+\[
+    d(\vect{a}, \vect{p}) + m < d(\vect{a}, \vect{n})
+\]
+This relationship is visualized in Figure~\ref{fig:triplet-loss}.
+\end{definition}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[scale=1.2]
+    % Anchor
+    \node[circle, fill=primaryblue, minimum size=8mm, label={[font=\small]below:Anchor $\vect{a}$}] (a) at (0, 0) {};
+
+    % Positive (close)
+    \node[circle, fill=primarygreen, minimum size=8mm, label={[font=\small]above:Positive $\vect{p}$}] (p) at (1.5, 1) {};
+
+    % Negative (far)
+    \node[circle, fill=primaryred, minimum size=8mm, label={[font=\small]above:Negative $\vect{n}$}] (n) at (4, 0.5) {};
+
+    % Distance lines
+    \draw[line width=1.2pt, primarygreen, dashed] (a) -- (p) node[midway, above left, font=\small] {$d(\vect{a}, \vect{p})$};
+    \draw[line width=1.2pt, primaryred, dashed] (a) -- (n) node[midway, below, font=\small] {$d(\vect{a}, \vect{n})$};
+
+    % Margin annotation
+    \draw[<->, line width=1.2pt] (2.5, -0.8) -- (4, -0.8) node[midway, below, font=\small] {margin $m$};
+\end{tikzpicture}
+\caption{Triplet loss: the anchor-positive distance plus margin should be less than anchor-negative distance.}
+\label{fig:triplet-loss}
+\end{figure}
+
+\begin{important}
+\textbf{Triplet Mining}\index{triplet mining|textbf} is crucial for effective training:
+\begin{itemize}
+    \item \textbf{Easy triplets}\index{triplet mining!easy triplets}: Already satisfy the constraint; provide no gradient
+    \item \textbf{Hard triplets}\index{triplet mining!hard triplets}: Violate the constraint significantly; may destabilize training
+    \item \textbf{Semi-hard triplets}\index{triplet mining!semi-hard triplets}: Satisfy $d(\vect{a}, \vect{p}) < d(\vect{a}, \vect{n}) < d(\vect{a}, \vect{p}) + m$; optimal for learning
+\end{itemize}
+\end{important}
+
+\begin{pythoncode}
+import torch
+import torch.nn.functional as F
+
+def triplet_loss(anchor, positive, negative, margin=1.0):
+    """
+    Triplet loss for metric learning.
+
+    Uses Euclidean distance by default. For normalized embeddings,
+    consider cosine distance: dist = 1 - cosine_similarity.
+
+    Args:
+        anchor: Anchor embeddings (N, D)
+        positive: Positive embeddings (N, D)
+        negative: Negative embeddings (N, D)
+        margin: Minimum separation between pos/neg pairs (default 1.0)
+    """
+    d_ap = F.pairwise_distance(anchor, positive)
+    d_an = F.pairwise_distance(anchor, negative)
+
+    loss = torch.clamp(d_ap - d_an + margin, min=0)
+    return loss.mean()
+\end{pythoncode}
+
+\subsection{InfoNCE and Contrastive Learning}
+
+\begin{definition}{InfoNCE Loss}{infonce-def}
+The \textbf{InfoNCE}\index{InfoNCE|textbf}\index{noise-contrastive estimation|see{InfoNCE}} (Noise-Contrastive Estimation) loss, used in SimCLR\index{SimCLR} and CLIP\index{CLIP}:
+\[
+    \mathcal{L}_{\text{InfoNCE}} = -\log \frac{\exp(\text{sim}(\vect{z}_i, \vect{z}_j) / \tau)}{\sum_{k=1}^{2N} \mathbf{1}_{[k \neq i]} \exp(\text{sim}(\vect{z}_i, \vect{z}_k) / \tau)}
+\]
+where $\text{sim}(\vect{u}, \vect{v}) = \vect{u}\trans \vect{v} / (\norm{\vect{u}} \norm{\vect{v}})$ is cosine similarity, $\tau$ is temperature, and the sum runs over all examples in the batch including negatives.
+\end{definition}
+
+\begin{theorem}{InfoNCE and Mutual Information}{infonce-mi}
+InfoNCE provides a lower bound on mutual information\index{mutual information!lower bound}:
+\[
+    I(\vect{x}; \vect{z}) \geq \log(N) - \mathcal{L}_{\text{InfoNCE}}
+\]
+where $N$ is the number of negative samples. Minimizing InfoNCE maximizes a lower bound on mutual information between views.
+\end{theorem}
+
+\begin{pythoncode}
+import torch
+import torch.nn.functional as F
+
+def info_nce_loss(z_i, z_j, temperature=0.5):
+    """
+    InfoNCE loss for contrastive learning.
+
+    Args:
+        z_i: First view embeddings (N, D)
+        z_j: Second view embeddings (N, D) - positive pairs
+        temperature: Softmax temperature
+    """
+    batch_size = z_i.size(0)
+
+    # L2 normalize embeddings with epsilon for numerical stability
+    z_i = z_i / (torch.norm(z_i, dim=1, keepdim=True) + 1e-8)
+    z_j = z_j / (torch.norm(z_j, dim=1, keepdim=True) + 1e-8)
+
+    # Concatenate for all-pairs similarity
+    z = torch.cat([z_i, z_j], dim=0)  # (2N, D)
+
+    # Compute similarity matrix
+    sim = torch.mm(z, z.t()) / temperature  # (2N, 2N)
+
+    # Mask out self-similarity
+    mask = torch.eye(2 * batch_size, device=z.device).bool()
+    sim.masked_fill_(mask, float('-inf'))
+
+    # Positive pairs: (i, i+N) and (i+N, i)
+    labels = torch.cat([
+        torch.arange(batch_size, 2 * batch_size),
+        torch.arange(batch_size)
+    ]).to(z.device)
+
+    return F.cross_entropy(sim, labels)
+\end{pythoncode}
+
+\begin{keyconcept}{Choosing a Contrastive Loss}
+\begin{itemize}
+\item \textbf{Triplet loss}: Use when you have explicit positive/negative pairs and small batches. Requires careful mining strategies.
+\item \textbf{InfoNCE}: Use when you have large batches (512+) and want to avoid explicit mining. Dominant in modern contrastive learning (SimCLR, CLIP) due to simplicity and scalability.
+\item \textbf{Contrastive loss}: Use for simple pairwise similarity learning with binary labels.
+\end{itemize}
+
+\textbf{Practical advice for beginners:} Start with InfoNCE (NT-Xent) rather than triplet loss---it requires no explicit hard negative mining, scales naturally with batch size, and is simpler to implement correctly.
+\end{keyconcept}
+
+%------------------------------------------------------------------------------
+\section{Perceptual and Feature-Based Losses}
+\label{sec:perceptual-losses}
+
+For image generation and style transfer, pixel-wise losses often produce blurry results. Perceptual losses compare high-level features instead.
+
+\begin{definition}{Perceptual Loss}{perceptual-def}
+The \textbf{perceptual loss}\index{perceptual loss|textbf}\index{feature reconstruction loss|see{perceptual loss}} (or feature reconstruction loss) compares features extracted by a pretrained network $\phi$:
+\[
+    \mathcal{L}_{\text{perceptual}} = \sum_{l} \lambda_l \norm{\phi^{(l)}(\hat{\vect{x}}) - \phi^{(l)}(\vect{x})}_2^2
+\]
+where $\phi^{(l)}$ denotes the features at layer $l$ and $\lambda_l$ are layer weights.
+\end{definition}
+
+\begin{intuition}
+A pretrained CNN (typically VGG) has learned hierarchical features: edges at early layers, textures in middle layers, and semantic content in deep layers. Matching these features rather than raw pixels encourages perceptual similarity.
+\end{intuition}
+
+\begin{definition}{Style Loss}{style-def}
+For neural style transfer\index{neural style transfer}, the \textbf{style loss}\index{style loss|textbf} matches feature correlations via Gram matrices\index{Gram matrix}:
+\[
+    \mathcal{L}_{\text{style}} = \sum_{l} \lambda_l \norm{\mat{G}^{(l)}(\hat{\vect{x}}) - \mat{G}^{(l)}(\vect{x}_{\text{style}})}_F^2
+\]
+where $\mat{G}^{(l)} = \mat{F}^{(l)} {\mat{F}^{(l)}}^\top$ is the Gram matrix of features $\mat{F}^{(l)} \in \R^{C \times HW}$.
+\end{definition}
+
+\begin{pythoncode}
+import torch
+import torch.nn as nn
+import torchvision.models as models
+
+class PerceptualLoss(nn.Module):
+    """Perceptual loss using VGG19 features."""
+
+    def __init__(self, layers=['relu1_2', 'relu2_2', 'relu3_4', 'relu4_4'],
+                 device='cuda'):
+        super().__init__()
+        # Use weights=VGG19_Weights.DEFAULT for torchvision >= 0.13
+        vgg = models.vgg19(weights='DEFAULT').features
+
+        # Freeze VGG parameters
+        for param in vgg.parameters():
+            param.requires_grad = False
+
+        self.vgg = vgg.to(device).eval()  # Move to device and set eval mode
+        self.layer_indices = {'relu1_2': 4, 'relu2_2': 9,
+                              'relu3_4': 18, 'relu4_4': 27}
+        self.layers = layers
+        self.device = device
+
+    def forward(self, pred, target):
+        # Ensure inputs are on the correct device
+        pred = pred.to(self.device)
+        target = target.to(self.device)
+        loss = 0
+        x_pred, x_target = pred, target
+
+        for name, module in self.vgg._modules.items():
+            x_pred = module(x_pred)
+            x_target = module(x_target)
+
+            if name in [str(self.layer_indices[l]) for l in self.layers]:
+                loss += torch.mean((x_pred - x_target) ** 2)
+
+        return loss
+\end{pythoncode}
+
+For image super-resolution, use early VGG layers (relu2\_2) for color and texture fidelity, and deeper layers (relu4\_4) for structural consistency. For style transfer, combine multiple layers. A common starting point: $\lambda = \{\text{relu1\_2}: 0.1, \text{relu2\_2}: 0.2, \text{relu3\_4}: 0.4, \text{relu4\_4}: 0.3\}$, adjusted based on visual inspection.
+
+%------------------------------------------------------------------------------
+\section{Choosing the Right Loss Function}
+\label{sec:choosing-loss}
+
+\begin{table}[htbp]
+\centering
+\caption{Loss function selection guide by task.}
+\label{tab:loss-selection}
+\begin{tabular}{@{}p{3.5cm}p{3.5cm}p{5cm}@{}}
+\toprule
+\textbf{Task} & \textbf{Recommended Loss} & \textbf{Considerations} \\
+\midrule
+Regression & MSE & Default; assumes Gaussian noise \\
+Robust regression & Huber, MAE & When outliers are present \\
+Binary classification & BCE with logits & Use class weights for imbalance \\
+Multi-class & Cross-entropy & Numerically stable from logits \\
+Imbalanced classes & Focal loss & Down-weights easy examples \\
+Metric learning & Triplet, InfoNCE & Requires mining strategy \\
+Image generation & Perceptual + L1 & Combines structure and detail \\
+Style transfer & Content + Style & Balance weights carefully \\
+Object detection & Focal + IoU & Multi-task with box regression \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+%------------------------------------------------------------------------------
+% Decision Frameworks for Loss Function Selection
+%------------------------------------------------------------------------------
+
+\subsection{Loss Selection Quick Reference}
+
+Rather than a complex flowchart, loss selection follows a simple decision process:
+
+\begin{keyconcept}
+\textbf{Three Questions for Loss Selection:}
+\begin{enumerate}
+    \item \textbf{What is your task?} Regression, classification, or representation learning?
+    \item \textbf{What are your data characteristics?} Outliers? Class imbalance? Noisy labels?
+    \item \textbf{What matters most?} Average accuracy, tail performance, or calibration?
+\end{enumerate}
+\end{keyconcept}
+
+\begin{table}[htbp]
+\centering
+\caption{Loss function selection guide}
+\label{tab:loss-selection-extended}
+\begin{tabular}{@{}p{2.5cm}p{3.5cm}p{4cm}p{3cm}@{}}
+\toprule
+\textbf{Task} & \textbf{Default Loss} & \textbf{When to Switch} & \textbf{Alternative} \\
+\midrule
+Regression & MSE & Outliers present & Huber, MAE \\
+\addlinespace
+Binary classification & BCE & Class imbalance & Weighted BCE, Focal \\
+\addlinespace
+Multi-class & Cross-Entropy & Class imbalance & Focal, Label smoothing \\
+\addlinespace
+Similarity learning & Triplet / InfoNCE & Large batch available & NT-Xent, SupCon \\
+\addlinespace
+Image generation & Reconstruction + KL & Blurry outputs & Add perceptual loss \\
+\addlinespace
+Image-to-image & L1 / L2 & Perceptual quality matters & Perceptual + GAN \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{intuition}
+\textbf{The Default Path}: Start with the standard loss for your task (MSE for regression, cross-entropy for classification). Switch only when you have a specific reason---outliers, imbalance, or a gap between loss and evaluation metric. Adding complexity without justification often hurts generalization.
+\end{intuition}
+
+%------------------------------------------------------------------------------
+\subsection{When Loss Choice Goes Wrong: Case Studies}
+
+Understanding failure modes is as important as knowing best practices. The following case studies illustrate common mistakes and their consequences.
+
+\begin{example}{Case Study 1: MSE for Classification}{mse-classification-failure}
+\textbf{Scenario:} A team building a spam classifier uses MSE loss with labels $y \in \{0, 1\}$ and sigmoid output, training for 50 epochs on 100K emails.
+
+\textbf{Problem:} MSE penalizes confident correct predictions. When $\hat{y} = 0.99$ for true label $y = 1$, the gradient is $2(0.99 - 1) = -0.02$, which is tiny. Meanwhile, for $\hat{y} = 0.5$, the gradient is $2(0.5 - 1) = -1.0$---fifty times larger.
+
+\textbf{Symptom:} Predictions cluster around $0.5$ even after extensive training. Training accuracy plateaus at 68\% while cross-entropy achieves 94\% on the same architecture.
+
+\textbf{Diagnosis:} Plot the prediction histogram: MSE produces a bell curve centered at 0.5; cross-entropy produces bimodal peaks near 0 and 1.
+
+\textbf{Fix:} Switch to binary cross-entropy. For the same model, BCE achieves 94\% accuracy in 20 epochs (60\% fewer iterations).
+\end{example}
+
+\begin{example}{Case Study 2: Cross-Entropy with Noisy Labels}{ce-noisy-labels}
+\textbf{Scenario:} An image classifier trained on web-scraped data with approximately 15\% label noise (images mislabeled by crowdworkers).
+
+\textbf{Problem:} Cross-entropy drives the model to assign probability 1 to the labeled class. With noisy labels, this means memorizing incorrect examples: the model confidently predicts wrong labels for 15\% of training data.
+
+\textbf{Symptom:} Training loss approaches 0, but validation accuracy drops after epoch 30 (from 82\% to 71\%). The model's confidence on held-out noisy examples exceeds 95\%.
+
+\textbf{Diagnosis:} Track loss on a clean validation set vs. training set. Overfitting to noise shows as diverging curves after initial convergence.
+
+\textbf{Fix:} Apply label smoothing ($\epsilon = 0.1$) or use symmetric cross-entropy. With smoothing, validation accuracy stabilizes at 79\% and does not degrade.
+\end{example}
+
+\begin{example}{Case Study 3: Perceptual Loss Without Feature Scaling}{perceptual-scaling}
+\textbf{Scenario:} A super-resolution model using VGG perceptual loss at layers \texttt{relu2\_2} and \texttt{relu4\_4} produces images with incorrect colors---everything has a blue-green tint.
+
+\textbf{Problem:} VGG features at different layers have vastly different magnitudes. Layer \texttt{relu4\_4} features are 100x smaller than \texttt{relu2\_2}. Without normalization, the loss is dominated by early layers, which encode color but not structure.
+
+\textbf{Symptom:} Generated images have sharp edges (high-frequency content correct) but washed-out, shifted colors. PSNR is 24 dB but perceptual quality is poor.
+
+\textbf{Diagnosis:} Compute per-layer loss contributions: if one layer contributes 95\% of total loss, the others are being ignored.
+
+\textbf{Fix:} Normalize features by their mean activation or use layer-specific weights. After balancing: $\lambda_{\texttt{relu2\_2}} = 1.0$, $\lambda_{\texttt{relu4\_4}} = 10.0$. Color accuracy improves from 0.73 to 0.91 (measured by CIEDE2000).
+\end{example}
+
+%------------------------------------------------------------------------------
+\subsection{Common Pitfalls in Loss Function Usage}
+
+\begin{table}[htbp]
+\centering
+\caption{Common loss function pitfalls: symptoms, diagnostics, and fixes.}
+\label{tab:loss-pitfalls}
+\small
+\renewcommand{\arraystretch}{1.3}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{2.5cm}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+\toprule
+\textbf{Pitfall} & \textbf{Symptom} & \textbf{Diagnostic} & \textbf{Fix} \\
+\midrule
+MSE for classification & Predictions cluster at 0.5; slow convergence & Plot prediction histogram; check gradient magnitudes near 0/1 & Use cross-entropy; gradients scale with error \\
+\addlinespace
+Cross-entropy with label noise & Training loss $\to$ 0 but validation degrades; overconfident wrong predictions & Track clean validation loss; measure calibration on held-out set & Label smoothing ($\epsilon = 0.1$); co-teaching \\
+\addlinespace
+Unweighted CE with class imbalance & Minority class recall $<$ 20\%; model predicts majority class & Compute per-class metrics; check class distribution & Class weights ($w_c = N/N_c$); focal loss ($\gamma = 2$) \\
+\addlinespace
+L1/L2 loss for images & Blurry outputs; missing high-frequency details & Compute frequency spectrum; visual inspection & Add perceptual loss; combine L1 + perceptual \\
+\addlinespace
+Wrong reduction (sum vs.\ mean) & Loss magnitude varies with batch size; LR sensitivity & Compare loss across batch sizes; check gradient norms & Use \texttt{reduction='mean'}; adjust LR if using sum \\
+\addlinespace
+Triplet loss without mining & Loss $\to$ 0 quickly but embeddings poor & Monitor active triplet fraction; check embedding structure & Semi-hard mining; batch-hard mining; use InfoNCE \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+%------------------------------------------------------------------------------
+\subsection{Loss-Metric Mismatch}
+
+\begin{warning}
+\textbf{Optimizing a loss function does not guarantee optimizing your evaluation metric.}
+
+A fundamental disconnect exists between differentiable loss functions suitable for gradient descent and the discrete, non-differentiable metrics used to evaluate real-world performance.
+
+\textbf{The Problem:} Cross-entropy measures the quality of probability estimates, while metrics like AUC-ROC, F1-score, and precision@k measure ranking or thresholded decisions. Minimizing cross-entropy does not maximize these metrics.
+
+\textbf{Medical Diagnosis Example:} Consider a disease screening model evaluated by recall at 95\% precision (catching most sick patients while limiting false alarms). The model is trained with standard cross-entropy on 10,000 patients (500 positive, 9,500 negative).
+
+\begin{center}
+\begin{tabular}{@{}lcc@{}}
+\toprule
+\textbf{Training Loss} & \textbf{Cross-Entropy} & \textbf{Recall @ 95\% Precision} \\
+\midrule
+Cross-Entropy & 0.042 & 0.68 \\
+Focal Loss ($\gamma=2$) & 0.089 & 0.74 \\
+CE + AUC Surrogate & 0.051 & 0.82 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The model with lowest cross-entropy has the \emph{worst} performance on the actual evaluation metric. This happens because:
+\begin{enumerate}
+    \item Cross-entropy optimizes the average log-probability across all examples
+    \item The metric only cares about the ranking of positive examples at a specific precision threshold
+    \item Easy negatives dominate the cross-entropy gradient but are irrelevant to the metric
+\end{enumerate}
+
+\textbf{Mitigation Strategies:}
+\begin{itemize}
+    \item \textbf{Surrogate losses}: Use differentiable approximations to ranking metrics (e.g., AP loss, AUC margin loss)
+    \item \textbf{Threshold calibration}: After training, tune the decision threshold on a validation set to optimize the target metric
+    \item \textbf{Multi-objective training}: Combine cross-entropy with a surrogate for the evaluation metric
+    \item \textbf{Sample weighting}: Weight examples by their importance to the evaluation metric (e.g., hard example mining for precision-focused metrics)
+\end{itemize}
+
+\textbf{Rule of thumb}: Always evaluate your model using the actual target metric during development, not just the training loss.
+\end{warning}
+
+\begin{principle}
+The loss function should reflect the true objective:
+\begin{enumerate}
+    \item \textbf{Match the output type}: Classification needs probabilistic losses; regression needs distance-based losses
+    \item \textbf{Consider the data distribution}: Outliers call for robust losses; imbalance needs reweighting
+    \item \textbf{Align with evaluation metrics}: If evaluated by ranking, consider ranking losses
+    \item \textbf{Account for perceptual quality}: For generative tasks, use perceptual losses
+\end{enumerate}
+\end{principle}
+
+%------------------------------------------------------------------------------
+\section{Connection to Maximum Likelihood Estimation}
+\label{sec:loss-mle}
+
+\begin{theorem}{Loss Functions as Negative Log-Likelihoods}{loss-nll}
+Most standard loss functions are negative log-likelihoods under specific probabilistic assumptions:
+
+\begin{center}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Loss} & \textbf{Distribution} & \textbf{Likelihood} \\
+\midrule
+MSE & Gaussian & $p(y \given \hat{y}) = \mathcal{N}(\hat{y}, \sigma^2)$ \\
+MAE & Laplace & $p(y \given \hat{y}) = \frac{1}{2b}e^{-|y-\hat{y}|/b}$ \\
+Cross-entropy & Categorical & $p(y \given \hat{\vect{p}}) = \prod_k \hat{p}_k^{y_k}$ \\
+BCE & Bernoulli & $p(y \given \hat{p}) = \hat{p}^y(1-\hat{p})^{1-y}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+\end{theorem}
+
+\begin{keyconcept}
+Understanding the probabilistic interpretation of losses reveals their implicit assumptions. MSE assumes homoscedastic Gaussian noise; cross-entropy assumes the model outputs valid probabilities. Choosing a loss function is equivalent to choosing a noise model for the data.
+\end{keyconcept}
+
+\begin{warstory}
+\textbf{The Silent Killer}
+
+In 2019, Facebook's ad ranking system had a subtle bug. The loss function was mathematically correct, but an edge case in how predictions were weighted caused certain ads to be systematically under-ranked.
+
+The bug was invisible to standard metrics. Average loss looked fine. A/B test metrics looked fine. But a specific category of advertisers saw their reach drop by 30\%.
+
+It took weeks to diagnose because the loss function ``looked right.'' The issue was a numerical edge case: when predicted probabilities were very close to 0 or 1, the gradient weighting became unstable.
+
+The fix was simple once found: add epsilon to the denominator. But finding it required understanding exactly what the loss function optimized---not just its mathematical form.
+
+\textbf{Lesson:} Your loss function defines what your model learns. Get it exactly right. Test edge cases. Understand not just the formula, but how it behaves across your entire data distribution.
+\end{warstory}
+
+\begin{definition}{Heteroscedastic Loss}{heteroscedastic-def}
+\index{heteroscedastic loss|textbf}When noise variance varies across inputs, the model can predict both mean $\mu(\vect{x})$ and variance $\sigma^2(\vect{x})$:
+\[
+    \mathcal{L} = \frac{(y - \mu(\vect{x}))^2}{2\sigma^2(\vect{x})} + \frac{1}{2}\log \sigma^2(\vect{x})
+\]
+This allows the model to express uncertainty.
+\end{definition}
+
+%------------------------------------------------------------------------------
+\section{Regularization Through Loss Functions}
+\label{sec:loss-regularization}
+
+Loss functions can incorporate regularization directly.
+
+\begin{definition}{L1 and L2 Regularization}{l1l2-reg}
+Adding norm penalties to the loss:
+\begin{align}
+    \mathcal{L}_{\text{L2}} &= \mathcal{L}_{\text{data}} + \lambda \norm{\vect{\theta}}_2^2 & \text{(Ridge/weight decay)} \\
+    \mathcal{L}_{\text{L1}} &= \mathcal{L}_{\text{data}} + \lambda \norm{\vect{\theta}}_1 & \text{(Lasso/sparsity)}
+\end{align}
+\end{definition}
+
+\begin{theorem}{Regularization as Prior}{reg-prior}
+L2 regularization is equivalent to MAP estimation with a Gaussian prior $\vect{\theta} \sim \mathcal{N}(\mathbf{0}, \frac{1}{2\lambda}\mat{I})$. L1 regularization corresponds to a Laplace prior, encouraging sparse solutions.
+\end{theorem}
+
+\begin{definition}{Label Smoothing}{label-smooth-def}
+\textbf{Label smoothing}\index{label smoothing!in loss functions} softens one-hot targets to prevent overconfidence:
+\[
+    y_k^{\text{smooth}} = (1 - \epsilon) y_k + \frac{\epsilon}{K}
+\]
+where $\epsilon$ is the smoothing parameter (typically 0.1).
+\end{definition}
+
+\begin{intuition}
+Label smoothing encourages the model to be less certain about its predictions, reducing the incentive to push logits to extreme values. This acts as a form of regularization and often improves generalization, especially in Transformer models.
+\end{intuition}
+
+\begin{checkpoint}
+How do you design a loss function for a new problem? What properties should it have?
+\end{checkpoint}
+
+\begin{whatbreaks}
+\textbf{Exercise 1:} You use MSE loss for a 1000-class classification problem and observe extremely slow convergence with predictions clustering around $1/1000$. Why is this happening, and what loss would fix it?
+
+\textbf{Exercise 2:} Someone removes the $\log$ from cross-entropy, using $\mathcal{L} = -\hat{p}_c$ directly. Training completely fails. Why does the logarithm matter so much?
+\end{whatbreaks}
+
+%------------------------------------------------------------------------------
+\section{Exercises}
+\label{sec:loss-exercises}
+
+\begin{exercise}{MSE vs MAE Robustness}{ex-mse-mae}
+Consider a dataset with one outlier: $\{(1, 1), (2, 2), (3, 3), (4, 100)\}$. Fit a linear model $\hat{y} = wx$ (no bias) using:
+\begin{enumerate}[label=(\alph*)]
+    \item MSE loss: derive the optimal $w$ analytically
+    \item MAE loss: explain why the solution is different
+    \item Huber loss with $\delta = 1$: describe the behavior
+\end{enumerate}
+\end{exercise}
+
+\begin{exercise}{Cross-Entropy Gradient}{ex-ce-gradient}
+For a 3-class problem with logits $\vect{z} = [2, 1, 0]$ and true class $c = 0$:
+\begin{enumerate}[label=(\alph*)]
+    \item Compute the softmax probabilities $\hat{\vect{p}}$
+    \item Compute the cross-entropy loss
+    \item Compute the gradient $\partial \mathcal{L} / \partial \vect{z}$
+    \item Verify that the gradient pushes $z_0$ up and $z_1, z_2$ down
+\end{enumerate}
+\end{exercise}
+
+\begin{exercise}{Focal Loss Analysis}{ex-focal}
+Plot the focal loss for $\gamma \in \{0, 1, 2, 5\}$ as a function of $\hat{p}_c$:
+\begin{enumerate}[label=(\alph*)]
+    \item Show that $\gamma = 0$ recovers cross-entropy
+    \item Find the value of $\hat{p}_c$ where the loss is halved compared to CE for $\gamma = 2$
+    \item Discuss the trade-off between focusing too much on hard examples
+\end{enumerate}
+\end{exercise}
+
+\begin{exercise}{Triplet Mining}{ex-triplet}
+Given embeddings for 4 examples from 2 classes: $A_1 = [0, 0]$, $A_2 = [1, 0]$ (class A), $B_1 = [3, 0]$, $B_2 = [4, 0]$ (class B). With margin $m = 1$:
+\begin{enumerate}[label=(\alph*)]
+    \item List all valid triplets $(a, p, n)$
+    \item Compute the triplet loss for each
+    \item Identify easy, semi-hard, and hard triplets
+\end{enumerate}
+\end{exercise}
+
+\begin{exercise}{Loss Function Design}{ex-design}
+Design a loss function for the following scenario: predicting house prices where:
+\begin{itemize}
+    \item Large percentage errors matter more than small absolute errors
+    \item Overestimation is worse than underestimation (buyers are unhappy)
+\end{itemize}
+Write the mathematical form and justify your choices.
+\end{exercise}
+
+%------------------------------------------------------------------------------
+\section{Summary}
+\label{sec:loss-summary}
+
+This chapter explored the rich landscape of loss functions and optimization objectives in machine learning, from foundational regression and classification losses to advanced contrastive and perceptual objectives:
+
+\begin{itemize}
+    \item \textbf{Regression losses}: MSE assumes Gaussian noise and is sensitive to outliers; MAE is robust but has non-smooth gradients; Huber loss combines their advantages
+
+    \item \textbf{Classification losses}: Cross-entropy maximizes likelihood of correct class; BCE handles binary labels; both should be computed from logits for stability
+
+    \item \textbf{Margin-based losses}: Hinge loss enforces separation without calibrated probabilities; forms the foundation of SVMs
+
+    \item \textbf{Focal loss}: Down-weights easy examples to address class imbalance; controlled by focusing parameter $\gamma$
+
+    \item \textbf{Contrastive losses}: Triplet and InfoNCE learn representations by comparing positive and negative pairs; require careful mining strategies
+
+    \item \textbf{Perceptual losses}: Compare deep features rather than pixels; essential for realistic image generation
+
+    \item \textbf{MLE connection}: Most losses are negative log-likelihoods under specific distributional assumptions
+
+    \item \textbf{Choice matters}: The loss function encodes task objectives and data assumptions; misalignment leads to suboptimal models
+\end{itemize}
+
+In the next chapter, we analyze \textbf{convergence}---the theoretical guarantees that tell us when and how fast our optimization algorithms will find good solutions.
+
+\section*{Interview Questions}
+\begin{interviewquestions}
+
+\textbf{Question 1: Why use cross-entropy instead of MSE for classification?}
+
+\textit{Expected follow-ups:}
+\begin{itemize}
+    \item What happens to gradients when the model is confident but wrong with each loss?
+    \item Can you derive the gradient of cross-entropy with softmax?
+    \item When might MSE actually be appropriate for classification?
+\end{itemize}
+
+\textit{Red flags to avoid:}
+\begin{itemize}
+    \item Saying ``cross-entropy is for classification, MSE is for regression'' without explaining why
+    \item Not understanding the gradient behavior difference
+    \item Not knowing that cross-entropy gradient is simply $\hat{p} - y$
+\end{itemize}
+
+\textit{Strong answer key points:}
+\begin{itemize}
+    \item \textbf{Gradient behavior}: With MSE, if model predicts 0.99 but true label is 0, gradient is $2(0.99-0) = 1.98$. With cross-entropy, gradient at the logit is $0.99 - 0 = 0.99$. But the key is: for confident wrong predictions, MSE gradient vanishes (sigmoid saturation) while CE gradient remains strong
+    \item \textbf{Probabilistic interpretation}: CE is negative log-likelihood for categorical distribution; MSE assumes Gaussian noise which doesn't match discrete labels
+    \item \textbf{Softmax + CE gradient}: $\partial L / \partial z = \hat{p} - y$ is beautifully simple and never saturates
+    \item \textbf{When MSE might work}: Label smoothing scenarios, or when you want to penalize overconfident predictions less
+    \item \textbf{Numerical stability}: Always compute CE from logits using log-sum-exp trick, not from softmax probabilities
+\end{itemize}
+
+\vspace{0.5em}
+\textbf{Question 2: How would you design a loss for imbalanced classification?}
+
+\textit{Expected follow-ups:}
+\begin{itemize}
+    \item What is focal loss and how does it work?
+    \item What about class weighting?
+    \item How do you choose the hyperparameters?
+\end{itemize}
+
+\textit{Red flags to avoid:}
+\begin{itemize}
+    \item Only mentioning oversampling/undersampling (that's data-level, not loss-level)
+    \item Not knowing focal loss
+    \item Forgetting that the loss should match your evaluation metric
+\end{itemize}
+
+\textit{Strong answer key points:}
+\begin{itemize}
+    \item \textbf{Class weighting}: Weight loss by inverse class frequency: $w_c = N / N_c$. Simple but effective
+    \item \textbf{Focal loss}: $L = -(1 - \hat{p}_c)^\gamma \log \hat{p}_c$. Down-weights easy examples so model focuses on hard ones
+    \item \textbf{How focal loss works}: If $\hat{p}_c = 0.9$ (easy, correct), weight is $(0.1)^2 = 0.01$. If $\hat{p}_c = 0.1$ (hard), weight is $(0.9)^2 = 0.81$. Hard examples get 81x more influence
+    \item \textbf{Hyperparameters}: $\gamma = 2$ is standard starting point. Combine with $\alpha$ class weighting for best results
+    \item \textbf{Alternative}: Asymmetric loss (different weights for false positives vs. false negatives) when one error type matters more
+    \item \textbf{Key insight}: Match loss to evaluation metric. If you care about recall, weight false negatives more heavily
+\end{itemize}
+
+\vspace{0.5em}
+\textbf{Question 3: Explain triplet loss. What are the challenges in using it?}
+
+\textit{Expected follow-ups:}
+\begin{itemize}
+    \item What is triplet mining and why does it matter?
+    \item What are alternatives to triplet loss?
+    \item How do you choose the margin?
+\end{itemize}
+
+\textit{Red flags to avoid:}
+\begin{itemize}
+    \item Not knowing about mining strategies
+    \item Thinking all triplets are equally useful
+    \item Not knowing InfoNCE as an alternative
+\end{itemize}
+
+\textit{Strong answer key points:}
+\begin{itemize}
+    \item \textbf{Formula}: $L = \max(0, d(a,p) - d(a,n) + m)$ where $a$ is anchor, $p$ is positive (same class), $n$ is negative (different class), $m$ is margin
+    \item \textbf{Mining challenge}: Most triplets are ``easy'' (already satisfy constraint) and contribute zero gradient. Must find informative triplets
+    \item \textbf{Mining strategies}: (1) Easy: $d(a,p) < d(a,n)$ (zero loss), (2) Semi-hard: $d(a,p) < d(a,n) < d(a,p) + m$ (best for learning), (3) Hard: $d(a,n) < d(a,p)$ (can destabilize)
+    \item \textbf{Batch-hard mining}: Within each batch, find hardest positive and hardest negative per anchor
+    \item \textbf{Alternatives}: InfoNCE/NT-Xent (used in SimCLR, CLIP) scales better---all samples in batch are potential negatives
+    \item \textbf{Margin selection}: Start with $m=0.2$ to $1.0$; tune based on embedding space scale
+\end{itemize}
+
+\vspace{0.5em}
+\textbf{Question 4: How do you implement numerically stable cross-entropy?}
+
+\textit{Expected follow-ups:}
+\begin{itemize}
+    \item What is the log-sum-exp trick?
+    \item Why compute from logits rather than probabilities?
+    \item How does PyTorch/TensorFlow handle this?
+\end{itemize}
+
+\textit{Red flags to avoid:}
+\begin{itemize}
+    \item Computing $\log(\text{softmax}(z))$ directly (underflow risk)
+    \item Not knowing the log-sum-exp trick
+    \item Forgetting that $\log(0)$ is undefined
+\end{itemize}
+
+\textit{Strong answer key points:}
+\begin{itemize}
+    \item \textbf{Problem}: $\log(\text{softmax}(z_c)) = \log(e^{z_c} / \sum e^{z_k})$. For large $z$, $e^z$ overflows; for large negative $z$, $e^z$ underflows
+    \item \textbf{Solution}: $\text{CE} = -z_c + \log\sum_k e^{z_k}$. Compute log-sum-exp stably
+    \item \textbf{Log-sum-exp trick}: $\log\sum e^{z_k} = z_{\max} + \log\sum e^{z_k - z_{\max}}$. Subtract max to prevent overflow
+    \item \textbf{Binary CE stable form}: $\max(z,0) - z \cdot y + \log(1 + e^{-|z|})$
+    \item \textbf{In frameworks}: Use \texttt{nn.CrossEntropyLoss} (PyTorch) or \texttt{tf.nn.softmax\_cross\_entropy\_with\_logits}---they handle stability internally
+    \item \textbf{Key principle}: Never compute $\log(p)$ where $p$ comes from softmax. Always work with logits
+\end{itemize}
+
+\vspace{0.5em}
+\textbf{Question 5: How do you choose a loss function for a new problem?}
+
+\textit{Expected follow-ups:}
+\begin{itemize}
+    \item What if your evaluation metric is non-differentiable?
+    \item How do you handle multi-task learning?
+    \item What about perceptual quality in generation?
+\end{itemize}
+
+\textit{Red flags to avoid:}
+\begin{itemize}
+    \item Saying ``just use cross-entropy for classification, MSE for regression'' without thinking about the specific problem
+    \item Not considering the gap between loss and evaluation metric
+    \item Forgetting about practical issues like class imbalance
+\end{itemize}
+
+\textit{Strong answer key points:}
+\begin{itemize}
+    \item \textbf{Step 1}: What is your output? Continuous $\Rightarrow$ regression loss. Discrete $\Rightarrow$ classification loss. Embeddings $\Rightarrow$ contrastive loss
+    \item \textbf{Step 2}: What are your data characteristics? Outliers $\Rightarrow$ robust loss (Huber, MAE). Class imbalance $\Rightarrow$ focal loss or weighting
+    \item \textbf{Step 3}: What is your evaluation metric? If metric is non-differentiable (F1, AUC), use a differentiable surrogate that correlates with it
+    \item \textbf{Generation tasks}: Pixel-wise loss (L1, L2) produces blurry outputs. Add perceptual loss for visual quality, adversarial loss for realism
+    \item \textbf{Multi-task}: Weight losses by task importance or use uncertainty weighting. Watch for gradients from one task dominating
+    \item \textbf{Golden rule}: Your model optimizes exactly what you measure. If the loss doesn't capture your true objective, the model will find ways to minimize it that don't help your actual goal
+\end{itemize}
+
+\end{interviewquestions}
+
+%------------------------------------------------------------------------------
+%  CHAPTER SUMMARY
+%------------------------------------------------------------------------------
+\begin{chaptersummary}
+\textbf{What We Covered:}
+\begin{itemize}
+    \item \textbf{Loss vs.\ Metric}: Loss functions are differentiable surrogates we optimize; metrics are what we actually care about---these are often different (surrogate loss optimization)
+    \item MSE assumes Gaussian noise and amplifies outliers; MAE is robust but has non-smooth gradients; Huber combines both
+    \item Cross-entropy maximizes likelihood for classification; compute from logits for numerical stability
+    \item Focal loss down-weights easy examples to address class imbalance via $(1-\hat{p}_c)^\gamma$ weighting
+    \item Contrastive losses (triplet, InfoNCE) learn representations by comparing positive and negative pairs
+\end{itemize}
+
+\textbf{Key Formulas:}
+\begin{align*}
+    &\text{Cross-Entropy: } \mathcal{L}_{\text{CE}} = -\sum_{k} y_k \log \hat{p}_k = -\log \hat{p}_c \\
+    &\text{Softmax Gradient: } \frac{\partial \mathcal{L}}{\partial \vect{z}} = \hat{\vect{p}} - \vect{y} \\
+    &\text{Focal Loss: } \mathcal{L}_{\text{focal}} = -(1-\hat{p}_c)^\gamma \log \hat{p}_c
+\end{align*}
+
+\textbf{When to Use This:}
+\begin{itemize}
+    \item Regression: MSE (default), Huber or MAE for outlier robustness
+    \item Classification: cross-entropy (default), focal loss for severe class imbalance
+    \item Representation learning: triplet loss with semi-hard mining, or InfoNCE for large batches
+    \item Image generation: combine L1/L2 reconstruction with perceptual loss for visual quality
+\end{itemize}
+
+\textbf{Next Up:} Convergence analysis---understanding when and how fast optimization algorithms find solutions, governed by smoothness, convexity, and condition numbers.
+\end{chaptersummary}
+
+\end{document}

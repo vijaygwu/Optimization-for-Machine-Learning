@@ -1,0 +1,587 @@
+\documentclass[../main.tex]{subfiles}
+
+\begin{document}
+
+\chapter{Production-Ready Code Recipes}\label{app:recipes}
+
+This appendix provides copy-paste PyTorch code recipes that implement the optimization techniques discussed throughout this book. Each recipe is production-ready and follows current best practices. These snippets are designed to be dropped directly into your training pipelines with minimal modification.
+
+%% ============================================================
+\section{Recipe 1: Standard Training Loop with Best Practices}\label{sec:recipe-training-loop}
+
+This training loop incorporates gradient clipping, automatic mixed precision (AMP), and gradient accumulation---three essential techniques for stable and efficient training at scale. Gradient clipping prevents exploding gradients, AMP reduces memory usage and speeds up training on modern GPUs, and gradient accumulation enables effective large batch training when GPU memory is limited.
+
+\begin{lstlisting}[language=Python]
+import torch
+from torch.amp import GradScaler, autocast
+
+def train_epoch(model, loader, optimizer, criterion, device,
+                clip_norm=1.0, accumulation_steps=4, use_amp=True):
+    """
+    Production training loop with gradient clipping, AMP, and accumulation.
+
+    Key hyperparameters:
+        clip_norm: Maximum gradient norm (1.0 is typical)
+        accumulation_steps: Effective batch = loader.batch_size * accumulation_steps
+        use_amp: Enable mixed precision (requires CUDA or MPS)
+    """
+    model.train()
+    scaler = GradScaler(enabled=use_amp)
+    optimizer.zero_grad()
+    total_loss = 0.0
+
+    # Determine device type for autocast (cuda, cpu, mps, etc.)
+    device_type = device.type if hasattr(device, 'type') else str(device).split(':')[0]
+
+    # Track actual accumulation for correct scaling
+    accumulated_steps = 0
+
+    for step, (inputs, targets) in enumerate(loader):
+        inputs, targets = inputs.to(device), targets.to(device)
+
+        # Forward pass with automatic mixed precision
+        with autocast(device_type, enabled=use_amp):
+            outputs = model(inputs)
+            loss = criterion(outputs, targets) / accumulation_steps
+
+        # Backward pass with scaled gradients
+        scaler.scale(loss).backward()
+        total_loss += loss.item() * accumulation_steps
+        accumulated_steps += 1
+
+        # Update weights every accumulation_steps
+        if (step + 1) % accumulation_steps == 0:
+            # Unscale before clipping
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), clip_norm)
+
+            # Optimizer step with scaler
+            scaler.step(optimizer)
+            scaler.update()
+            optimizer.zero_grad()
+            accumulated_steps = 0
+
+    # Flush any remaining accumulated gradients (final partial batch)
+    # Note: No scale correction needed - gradients are already correctly scaled
+    # from the per-batch division by accumulation_steps during backward pass
+    if accumulated_steps > 0:
+        scaler.unscale_(optimizer)
+        torch.nn.utils.clip_grad_norm_(model.parameters(), clip_norm)
+        scaler.step(optimizer)
+        scaler.update()
+        optimizer.zero_grad()
+
+    return total_loss / len(loader)
+\end{lstlisting}
+
+\textbf{Common modifications:}
+\begin{itemize}
+    \item Add \texttt{torch.backends.cudnn.benchmark = True} before training for CNN speedup
+    \item Use \texttt{set\_to\_none=True} in \texttt{zero\_grad()} for small performance gain
+    \item Add learning rate scheduler step after optimizer step
+\end{itemize}
+
+%% ============================================================
+\section{Recipe 2: Learning Rate Finder}\label{sec:recipe-lr-finder}
+
+The learning rate finder (popularized by FastAI) systematically tests learning rates by starting small and exponentially increasing until the loss explodes. The optimal learning rate is typically one order of magnitude below the point where loss begins increasing rapidly. This technique is essential for hyperparameter selection and can save hours of grid search.
+
+\begin{lstlisting}[language=Python]
+import torch
+import math
+from copy import deepcopy
+
+def find_lr(model, loader, optimizer, criterion, device,
+            start_lr=1e-7, end_lr=10, num_steps=100):
+    """
+    FastAI-style learning rate range test.
+
+    Returns:
+        lrs: List of tested learning rates
+        losses: Corresponding losses (use plot to find optimal LR)
+
+    Optimal LR is typically 1/10 of the LR where loss starts increasing.
+
+    Raises:
+        ValueError: If loader is empty
+    """
+    # Handle empty loader
+    try:
+        data_iter = iter(loader)
+        first_batch = next(data_iter)
+    except StopIteration:
+        raise ValueError("DataLoader is empty - cannot run LR finder")
+
+    # Save initial state
+    init_state = deepcopy(model.state_dict())
+    init_opt_state = deepcopy(optimizer.state_dict())
+
+    # Compute LR schedule (exponential increase)
+    gamma = (end_lr / start_lr) ** (1 / num_steps)
+    lr = start_lr
+
+    lrs, losses = [], []
+    best_loss = float('inf')
+    exploded = False
+
+    model.train()
+    # Reset iterator and include first batch
+    data_iter = iter(loader)
+
+    for step in range(num_steps):
+        # Set learning rate
+        for param_group in optimizer.param_groups:
+            param_group['lr'] = lr
+
+        # Get batch (cycle if necessary)
+        try:
+            inputs, targets = next(data_iter)
+        except StopIteration:
+            data_iter = iter(loader)
+            inputs, targets = next(data_iter)
+
+        inputs, targets = inputs.to(device), targets.to(device)
+
+        # Forward and backward
+        optimizer.zero_grad()
+        outputs = model(inputs)
+        loss = criterion(outputs, targets)
+        loss.backward()
+        optimizer.step()
+
+        # Record
+        lrs.append(lr)
+        losses.append(loss.item())
+
+        # Stop if loss explodes
+        if loss.item() > 4 * best_loss or math.isnan(loss.item()):
+            exploded = True
+            break
+        best_loss = min(best_loss, loss.item())
+
+        lr *= gamma
+
+    # Restore initial state
+    model.load_state_dict(init_state)
+    optimizer.load_state_dict(init_opt_state)
+
+    # Warn if loss never exploded (may need higher end_lr)
+    if not exploded and len(lrs) == num_steps:
+        import warnings
+        warnings.warn(
+            f"Loss did not explode - consider increasing end_lr (currently {end_lr})"
+        )
+
+    return lrs, losses
+\end{lstlisting}
+
+\textbf{Common modifications:}
+\begin{itemize}
+    \item Apply exponential smoothing to losses for cleaner plots
+    \item Use \texttt{plt.xscale('log')} when plotting results
+    \item Run multiple times and average for robustness
+\end{itemize}
+
+%% ============================================================
+\section{Recipe 3: One-Cycle Learning Rate Schedule}\label{sec:recipe-one-cycle}
+
+The one-cycle policy, introduced by Leslie Smith, is one of the most effective learning rate schedules. It starts with a warmup phase, increases to a maximum learning rate, then anneals down to near zero. This approach often achieves better results with fewer epochs than constant or step-decay schedules.
+
+\begin{lstlisting}[language=Python]
+import torch
+from torch.optim.lr_scheduler import OneCycleLR
+
+def setup_one_cycle(optimizer, max_lr, total_steps, pct_start=0.3,
+                    div_factor=25, final_div_factor=1e4):
+    """
+    One-cycle learning rate schedule (Smith, 2018).
+
+    Key hyperparameters:
+        max_lr: Peak learning rate (use LR finder to determine)
+        total_steps: epochs * steps_per_epoch
+        pct_start: Fraction of cycle spent increasing LR (0.3 = 30%)
+        div_factor: initial_lr = max_lr / div_factor
+        final_div_factor: final_lr = initial_lr / final_div_factor
+    """
+    scheduler = OneCycleLR(
+        optimizer,
+        max_lr=max_lr,
+        total_steps=total_steps,
+        pct_start=pct_start,
+        div_factor=div_factor,
+        final_div_factor=final_div_factor,
+        anneal_strategy='cos'  # 'linear' is alternative
+    )
+    return scheduler
+
+# Usage in training loop:
+# for epoch in range(num_epochs):
+#     for batch in loader:
+#         loss = train_step(...)
+#         optimizer.step()
+#         scheduler.step()  # Call after EVERY batch, not epoch
+\end{lstlisting}
+
+\textbf{Common modifications:}
+\begin{itemize}
+    \item Use \texttt{anneal\_strategy='linear'} for simpler decay
+    \item Adjust \texttt{pct\_start} based on dataset size (smaller datasets may need less warmup)
+    \item Combine with momentum scheduling via \texttt{cycle\_momentum=True}
+\end{itemize}
+
+%% ============================================================
+\section{Recipe 4: Cosine Annealing with Warm Restarts}\label{sec:recipe-sgdr}
+
+SGDR (Stochastic Gradient Descent with Warm Restarts) periodically resets the learning rate to escape local minima and explore new regions of the loss landscape. Each restart allows the optimizer to potentially find better solutions, and the increasing period lengths give more time for fine-grained optimization as training progresses.
+
+\begin{lstlisting}[language=Python]
+import torch
+from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
+
+def setup_sgdr(optimizer, T_0, T_mult=2, eta_min=1e-6):
+    """
+    Cosine annealing with warm restarts (SGDR, Loshchilov & Hutter, 2016).
+
+    Key hyperparameters:
+        T_0: Initial restart period (in epochs or steps)
+        T_mult: Period multiplier after each restart (2 = doubling)
+        eta_min: Minimum learning rate
+
+    Schedule: LR oscillates between eta_max and eta_min with
+    increasing periods: T_0, T_0*T_mult, T_0*T_mult^2, ...
+    """
+    scheduler = CosineAnnealingWarmRestarts(
+        optimizer,
+        T_0=T_0,
+        T_mult=T_mult,
+        eta_min=eta_min
+    )
+    return scheduler
+
+# Usage in training loop:
+# for epoch in range(num_epochs):
+#     for batch_idx, batch in enumerate(loader):
+#         loss = train_step(...)
+#         optimizer.step()
+#         # For sub-epoch granularity:
+#         scheduler.step(epoch + batch_idx / len(loader))
+\end{lstlisting}
+
+\textbf{Common modifications:}
+\begin{itemize}
+    \item Use \texttt{T\_mult=1} for fixed-period restarts
+    \item Snapshot ensemble: save model at each restart minimum
+    \item Start with \texttt{T\_0=10} epochs and adjust based on convergence
+\end{itemize}
+
+%% ============================================================
+\section{Recipe 5: AdamW with Linear Warmup}\label{sec:recipe-adamw-warmup}
+
+This is the standard optimizer configuration for transformer models and large language models. Linear warmup prevents early training instability when using adaptive optimizers with large learning rates. The warmup period allows the optimizer's moment estimates to stabilize before taking large steps.
+
+\begin{lstlisting}[language=Python]
+import math
+import torch
+from torch.optim import AdamW
+from torch.optim.lr_scheduler import LambdaLR
+
+def get_adamw_with_warmup(model, lr=1e-4, weight_decay=0.01,
+                          warmup_steps=1000, total_steps=100000,
+                          warmup_init_lr_factor=1e-2):
+    """
+    AdamW with linear warmup and cosine decay (standard for transformers).
+
+    Key hyperparameters:
+        lr: Peak learning rate (1e-4 to 5e-4 typical for transformers)
+        weight_decay: L2 regularization (0.01 to 0.1)
+        warmup_steps: Linear warmup period (1-10% of total steps)
+        total_steps: Total training steps
+        warmup_init_lr_factor: Initial LR as fraction of peak (default 1e-2)
+    """
+    # AdamW with decoupled weight decay
+    optimizer = AdamW(
+        model.parameters(),
+        lr=lr,
+        betas=(0.9, 0.999),
+        eps=1e-8,
+        weight_decay=weight_decay
+    )
+
+    # Linear warmup then cosine decay
+    def lr_lambda(step):
+        # Handle edge cases: warmup_steps=0 or step=0
+        if warmup_steps <= 0:
+            # No warmup: go straight to cosine decay
+            progress = step / max(1, total_steps)
+            return 0.5 * (1.0 + math.cos(math.pi * progress))
+        if step < warmup_steps:
+            # Linear warmup: start at warmup_init_lr_factor to avoid zero LR at step=0
+            return max(warmup_init_lr_factor, step / warmup_steps)
+        # Cosine decay after warmup
+        progress = (step - warmup_steps) / max(1, total_steps - warmup_steps)
+        return 0.5 * (1.0 + math.cos(math.pi * progress))
+
+    scheduler = LambdaLR(optimizer, lr_lambda)
+
+    return optimizer, scheduler
+
+# Usage:
+# optimizer, scheduler = get_adamw_with_warmup(model, lr=3e-4)
+# for step in range(total_steps):
+#     loss = train_step(...)
+#     optimizer.step()
+#     scheduler.step()
+\end{lstlisting}
+
+\textbf{Common modifications:}
+\begin{itemize}
+    \item Use separate parameter groups for different weight decay (e.g., no decay on biases)
+    \item Adjust betas for specific architectures (some use $\beta_2 = 0.95$)
+    \item Add gradient clipping (1.0 is standard for transformers)
+\end{itemize}
+
+%% ============================================================
+\section{Recipe 6: Gradient Clipping Wrapper}\label{sec:recipe-gradient-clipping}
+
+Gradient clipping is essential for training stability, especially with RNNs, transformers, and deep networks. Norm clipping scales all gradients proportionally when the total norm exceeds a threshold, while value clipping caps individual gradient values. Norm clipping is generally preferred as it preserves gradient direction.
+
+\begin{lstlisting}[language=Python]
+import torch
+
+def clip_gradients(model, max_norm=1.0, max_value=None, norm_type=2):
+    """
+    Gradient clipping utilities (apply after loss.backward(), before optimizer.step()).
+
+    Key hyperparameters:
+        max_norm: Maximum gradient norm (1.0 typical, lower for instability)
+        max_value: Maximum absolute gradient value (alternative to norm clipping)
+        norm_type: Norm type (2 = L2 norm, most common)
+
+    Returns:
+        total_norm: The computed gradient norm (useful for monitoring)
+    """
+    if max_value is not None:
+        # Value clipping: clip each gradient element independently
+        torch.nn.utils.clip_grad_value_(model.parameters(), max_value)
+        return None
+
+    # Norm clipping: scale gradients if total norm exceeds threshold
+    total_norm = torch.nn.utils.clip_grad_norm_(
+        model.parameters(),
+        max_norm=max_norm,
+        norm_type=norm_type
+    )
+    return total_norm.item()
+
+# Usage:
+# loss.backward()
+# grad_norm = clip_gradients(model, max_norm=1.0)
+# if grad_norm > 10:  # Monitor for training issues
+#     print(f"Warning: large gradient norm {grad_norm:.2f}")
+# optimizer.step()
+\end{lstlisting}
+
+\textbf{Common modifications:}
+\begin{itemize}
+    \item Log gradient norms to detect training instability
+    \item Use adaptive clipping: increase threshold if consistently clipping
+    \item Apply per-layer clipping for very deep networks
+\end{itemize}
+
+%% ============================================================
+\section{Recipe 7: Exponential Moving Average of Weights}\label{sec:recipe-ema}
+
+EMA maintains a smoothed version of model weights for more stable evaluation and inference. The EMA model typically achieves better and more consistent results than the training model, especially in the presence of noise or learning rate fluctuations. This technique is standard in GANs, diffusion models, and competitive ML pipelines.
+
+\begin{lstlisting}[language=Python]
+import torch
+from copy import deepcopy
+
+class EMA:
+    """
+    Exponential Moving Average of model weights for stable evaluation.
+
+    Key hyperparameters:
+        decay: Smoothing factor (0.999 or 0.9999 typical)
+               Higher = smoother but slower to adapt
+    """
+    def __init__(self, model, decay=0.999):
+        self.decay = decay
+        self.shadow = deepcopy(model)
+        self.shadow.eval()
+        for param in self.shadow.parameters():
+            param.requires_grad_(False)
+
+    @torch.no_grad()
+    def update(self, model):
+        """Call after each optimizer step."""
+        # Update parameters with device-aware handling
+        for ema_param, model_param in zip(
+            self.shadow.parameters(), model.parameters()
+        ):
+            # Ensure EMA param is on same device as model param
+            if ema_param.device != model_param.device:
+                ema_param.copy_(ema_param.to(model_param.device))
+            ema_param.mul_(self.decay).add_(
+                model_param.detach(), alpha=1 - self.decay
+            )
+        # Update buffers (e.g., BatchNorm running_mean/running_var)
+        for ema_buf, model_buf in zip(
+            self.shadow.buffers(), model.buffers()
+        ):
+            ema_buf.copy_(model_buf)
+
+    def forward(self, *args, **kwargs):
+        """Use EMA model for inference."""
+        return self.shadow(*args, **kwargs)
+
+    def state_dict(self):
+        return self.shadow.state_dict()
+
+    def load_state_dict(self, state_dict):
+        self.shadow.load_state_dict(state_dict)
+
+# Usage:
+# ema = EMA(model, decay=0.999)
+# for batch in loader:
+#     loss = train_step(...)
+#     optimizer.step()
+#     ema.update(model)
+# # For evaluation:
+# with torch.no_grad():
+#     predictions = ema.forward(test_inputs)
+\end{lstlisting}
+
+\textbf{Common modifications:}
+\begin{itemize}
+    \item Add warmup: skip EMA updates for first $N$ steps
+    \item Use decay schedule: start with lower decay, increase over training
+    \item Include buffers (batch norm stats) in EMA updates
+\end{itemize}
+
+%% ============================================================
+\section{Recipe 8: Early Stopping with Patience}\label{sec:recipe-early-stopping}
+
+Early stopping prevents overfitting by monitoring validation performance and stopping when it stops improving. The patience parameter allows for temporary performance dips, and the delta parameter defines the minimum improvement threshold. This is one of the most effective regularization techniques in practice.
+
+\begin{lstlisting}[language=Python]
+import torch
+from copy import deepcopy
+
+class EarlyStopping:
+    """
+    Early stopping to prevent overfitting.
+
+    Key hyperparameters:
+        patience: Number of epochs to wait for improvement
+        min_delta: Minimum change to qualify as improvement
+        mode: 'min' for loss, 'max' for accuracy
+        auto_restore: Automatically restore best weights when stopping
+    """
+    def __init__(self, patience=10, min_delta=1e-4, mode='min',
+                 auto_restore=False):
+        self.patience = patience
+        self.min_delta = min_delta
+        self.mode = mode
+        self.auto_restore = auto_restore
+        self.counter = 0
+        self.best_score = None
+        self.best_model = None
+        self.should_stop = False
+
+    def __call__(self, score, model):
+        """
+        Call after each validation epoch.
+
+        Returns:
+            bool: True if training should stop
+        """
+        if self.best_score is None:
+            self.best_score = score
+            self.best_model = deepcopy(model.state_dict())
+            return False
+
+        # Check for improvement
+        if self.mode == 'min':
+            improved = score < self.best_score - self.min_delta
+        else:
+            improved = score > self.best_score + self.min_delta
+
+        if improved:
+            self.best_score = score
+            self.best_model = deepcopy(model.state_dict())
+            self.counter = 0
+        else:
+            self.counter += 1
+            if self.counter >= self.patience:
+                self.should_stop = True
+                if self.auto_restore and self.best_model is not None:
+                    model.load_state_dict(self.best_model)
+
+        return self.should_stop
+
+    def restore_best(self, model):
+        """Restore the best model weights."""
+        if self.best_model is not None:
+            model.load_state_dict(self.best_model)
+
+# Usage:
+# early_stopping = EarlyStopping(patience=10, mode='min')
+# for epoch in range(max_epochs):
+#     train_loss = train_epoch(...)
+#     val_loss = validate(...)
+#     if early_stopping(val_loss, model):
+#         print(f"Early stopping at epoch {epoch}")
+#         break
+# early_stopping.restore_best(model)
+\end{lstlisting}
+
+\textbf{Common modifications:}
+\begin{itemize}
+    \item Save checkpoints to disk instead of memory for large models
+    \item Use multiple metrics (e.g., stop on loss, restore best accuracy)
+    \item Add learning rate reduction before stopping (reduce-on-plateau)
+\end{itemize}
+
+%% ============================================================
+\section{Quick Reference}\label{sec:recipe-quick-reference}
+
+Table~\ref{tab:recipe-summary} provides a quick reference for selecting the appropriate recipe based on your use case.
+
+\begin{table}[htbp]
+\centering
+\caption{Recipe selection guide by use case.}
+\label{tab:recipe-summary}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Scenario} & \textbf{Primary Recipe} & \textbf{Supporting Recipes} \\
+\midrule
+CNN training (ResNet, etc.) & Recipe 1, 3 & 6, 8 \\
+Transformer/LLM training & Recipe 5 & 1, 6, 7 \\
+RNN/LSTM training & Recipe 1 & 6 (critical) \\
+GAN training & Recipe 7 & 1, 6 \\
+Diffusion models & Recipe 7 & 5, 6 \\
+Small dataset & Recipe 8 & 2, 3 \\
+Limited GPU memory & Recipe 1 & (gradient accumulation) \\
+Hyperparameter search & Recipe 2 & 8 \\
+Competition/production & Recipe 7 & 1, 3, 8 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Recommended Defaults}
+
+For practitioners starting a new project, we recommend the following default configuration:
+
+\begin{itemize}
+    \item \textbf{Optimizer:} AdamW with $\text{lr}=3 \times 10^{-4}$, $\text{weight\_decay}=0.01$
+    \item \textbf{Schedule:} One-cycle or linear warmup + cosine decay
+    \item \textbf{Gradient clipping:} Norm clipping with $\text{max\_norm}=1.0$
+    \item \textbf{Regularization:} Early stopping with $\text{patience}=10$
+    \item \textbf{Precision:} Mixed precision (AMP) if using modern GPU
+    \item \textbf{Evaluation:} EMA with $\text{decay}=0.999$ for final model
+\end{itemize}
+
+These defaults provide a strong starting point that can be refined based on validation performance and the specific characteristics of your problem.
+
+\end{document}

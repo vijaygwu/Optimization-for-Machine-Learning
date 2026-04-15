@@ -1,0 +1,1404 @@
+%==============================================================================
+%  CHAPTER 10: Stochastic Optimization Methods
+%  Part II: Optimization Theory
+%==============================================================================
+\documentclass[../../main.tex]{subfiles}
+
+\begin{document}
+
+\chapter{Stochastic Optimization Methods}
+\label{ch:stochastic-optimization}
+
+In the early 2010s, ImageNet training took weeks on expensive GPUs. By 2018, researchers achieved comparable accuracy in just one hour using distributed training with massive batch sizes. The key insight wasn't faster hardware alone---it was stochastic gradient descent with careful learning rate scaling. Processing a tiny fraction of data at a time turned out to be faster than processing all of it.
+
+\begin{whycare}
+SGD makes large-scale ML possible. Without it, training on billions of data points would be computationally impossible. Understanding variance, batch size tradeoffs, and convergence is essential for scaling any ML system.
+\end{whycare}
+
+\begin{keyconcept}
+Stochastic optimization transforms intractable large-scale problems into manageable computations by replacing exact gradients with noisy estimates. This randomized approach is not merely an approximation---it introduces beneficial properties including implicit regularization, escape from local minima, and remarkable scalability to massive datasets. Understanding stochastic methods is essential for modern machine learning, where datasets routinely contain billions of examples.
+\end{keyconcept}
+
+\begin{realworld}
+\textbf{Why This Matters:} No one trains on full datasets anymore---SGD and mini-batches make large-scale learning possible.
+
+\textbf{Real Example:} GPT-3 trained on 300 billion tokens using Adam optimizer with batch sizes up to 3.2 million tokens~\cite{brown2020gpt3}.
+
+\textbf{Scale:} Stochastic methods reduce memory from O(n) to O(batch\_size), enabling trillion-parameter models.
+\end{realworld}
+
+\begin{prerequisites}
+\textbf{Before reading this chapter, you should be comfortable with:}
+\begin{itemize}
+    \item Gradient descent basics (see Book~1, Chapter~8)
+    \item Probability: expected value, variance (see Book~1, Chapter~3)
+    \item Convexity concepts (Chapter~\ref{ch:convex-optimization})
+\end{itemize}
+\textbf{Review if needed:} Chapter~\ref{ch:convex-optimization} for convexity, Book~1, Chapter~3 for expectations
+\end{prerequisites}
+
+%------------------------------------------------------------------------------
+\section{Introduction}
+\label{sec:ch10-intro}
+
+In the previous chapter on convex optimization, we established conditions under which optimization problems have unique, efficiently computable solutions. Those methods assumed access to exact gradients---a luxury that becomes computationally prohibitive as datasets grow. When training a neural network on millions of images or billions of text tokens, computing the gradient over the entire dataset for each update is simply infeasible.
+
+\textbf{Stochastic optimization}\index{stochastic optimization|textbf} addresses this challenge by using random samples to estimate gradients. Rather than computing the exact gradient, we approximate it using a subset of the data---sometimes as small as a single example. This seemingly drastic approximation leads to algorithms that are not only faster but often find better solutions than their deterministic counterparts.
+
+\begin{intuition}
+Consider navigating a foggy mountain range where you can only see a small patch of ground around you. Full-batch gradient descent examines the entire landscape with perfect clarity before deciding which direction to step. Stochastic gradient descent instead takes many small steps, each guided by an imperfect but quick glimpse of the local terrain. Surprisingly, this ``blind'' wandering often reaches the valley faster---and sometimes finds valleys that the careful surveyor would miss entirely.
+\end{intuition}
+
+This chapter develops the theory and practice of stochastic optimization. We begin with the fundamental question of why stochastic methods work at all, then develop mini-batch gradient descent and analyze its convergence properties. We explore how the noise inherent in stochastic methods acts as a form of regularization, examine learning rate schedules and batch size effects, and conclude with practical guidance for deep learning applications.
+
+%------------------------------------------------------------------------------
+\section{From Convex Theory to Non-Convex Practice}
+\label{sec:ch10-convex-to-nonconvex}
+
+Before diving into stochastic methods, we must address a common confusion: \textit{Why study convex optimization when deep learning is non-convex?} This section bridges the gap between the clean theory of convex optimization and the messy reality of training neural networks.
+
+\begin{keyconcept}
+\textbf{Why Convexity Still Matters for Deep Learning:}
+
+\begin{enumerate}
+    \item \textbf{Local structure is often convex}: Even in highly non-convex loss landscapes, the local neighborhood around a point is often approximately convex. SGD exploits this by making small steps where local convex analysis applies. The convergence guarantees for convex problems tell us what happens in these ``well-behaved'' regions.
+
+    \item \textbf{Convergence rates transfer}: The rates we derive for convex functions---$O(1/\sqrt{T})$ for general convex, $O(1/T)$ for strongly convex---become \textit{local} rates in non-convex settings. Near a local minimum with positive curvature, SGD converges at rates predicted by convex theory. Understanding convex rates helps diagnose whether training is progressing normally.
+
+    \item \textbf{Algorithms designed for convex work surprisingly well}: Adam, RMSprop, and momentum were analyzed first for convex problems, yet they power all modern deep learning. The intuitions from convex optimization---why momentum accelerates, why adaptive rates help ill-conditioned problems---remain valid even when global convexity fails.
+\end{enumerate}
+\end{keyconcept}
+
+\begin{intuition}
+Think of a non-convex loss landscape as a mountain range with many valleys. Convex optimization theory tells us how to efficiently descend \textit{once we're in a valley}. The non-convex challenge is finding a good valley in the first place. Stochastic noise helps with exploration (finding valleys), while convex-style analysis tells us about exploitation (descending efficiently within a valley).
+\end{intuition}
+
+The key insight is that non-convex optimization in deep learning succeeds not despite the theory but \textit{because} local convex structure exists almost everywhere. Saddle points and poor local minima exist, but SGD's noise helps escape them. Once in the basin of a good minimum, convex analysis accurately predicts convergence behavior.
+
+\begin{principle}
+\textbf{The Practitioner's View:} Convex theory provides the ``best case'' analysis. In deep learning:
+\begin{itemize}
+    \item If convex methods fail, something is fundamentally wrong (numerical instability, bad hyperparameters)
+    \item If convex methods succeed slowly, the landscape is challenging but tractable
+    \item If convex methods succeed quickly, you're in a well-conditioned region
+\end{itemize}
+Deviations from convex predictions signal landscape difficulties that require adaptive methods or better initialization.
+\end{principle}
+
+%------------------------------------------------------------------------------
+\section{Why Stochastic Methods?}
+\label{sec:ch10-why-stochastic}
+
+\subsection{The Computational Challenge}
+
+Consider the standard empirical risk minimization problem:
+\begin{equation}
+\label{eq:ch10-erm}
+    \min_{\vect{\theta}} f(\vect{\theta}) = \frac{1}{n} \sum_{i=1}^{n} \ell(\vect{x}_i, y_i; \vect{\theta})
+\end{equation}
+where $\{(\vect{x}_i, y_i)\}_{i=1}^n$ is our training set and $\ell$ is a loss function measuring model fit.
+
+\begin{definition}{Full-Batch Gradient}{ch10-full-batch-gradient}
+The \textbf{full-batch gradient}\index{full-batch gradient} (or exact gradient) of the empirical risk is:
+\[
+    \grad f(\vect{\theta}) = \frac{1}{n} \sum_{i=1}^{n} \grad_\theta \ell(\vect{x}_i, y_i; \vect{\theta})
+\]
+Computing this requires evaluating the gradient for all $n$ training examples---a computation with cost $O(n \cdot d)$ where $d$ is the number of parameters.
+\end{definition}
+
+\begin{important}
+\textbf{The Scale Problem}: Modern deep learning involves both massive datasets and massive models:
+\begin{itemize}
+    \item ImageNet contains 14 million images
+    \item Common Crawl (used for LLM training) contains trillions of tokens
+    \item GPT-3 has 175 billion parameters; GPT-4's exact size was not publicly disclosed
+\end{itemize}
+Computing one exact gradient for such a model on such data could take days. Training requires thousands of gradient updates, making full-batch methods completely impractical.
+\end{important}
+
+\subsection{The Stochastic Gradient Estimator}
+
+The key insight is that we can estimate the gradient using a random subset of data.
+
+\begin{definition}{Stochastic Gradient}{ch10-stochastic-gradient}
+Let $i$ be uniformly sampled from $\{1, \ldots, n\}$. The \textbf{stochastic gradient}\index{stochastic gradient|textbf} is:
+\[
+    \vect{g}(\vect{\theta}; i) = \grad_\theta \ell(\vect{x}_i, y_i; \vect{\theta})
+\]
+This is an \textbf{unbiased estimator}\index{unbiased estimator} of the full gradient:
+\[
+    \E_i[\vect{g}(\vect{\theta}; i)] = \frac{1}{n} \sum_{i=1}^{n} \grad_\theta \ell(\vect{x}_i, y_i; \vect{\theta}) = \grad f(\vect{\theta})
+\]
+\end{definition}
+
+\begin{theorem}{Unbiasedness of Stochastic Gradient}{ch10-sgd-unbiased}
+For any uniformly random index $i \sim \text{Uniform}\{1, \ldots, n\}$, the stochastic gradient $\vect{g}(\vect{\theta}; i)$ satisfies:
+\[
+    \E[\vect{g}(\vect{\theta}; i)] = \grad f(\vect{\theta})
+\]
+\end{theorem}
+
+\begin{proof}
+By linearity of expectation:
+\begin{align*}
+    \E[\vect{g}(\vect{\theta}; i)] &= \sum_{i=1}^{n} \Prob(i) \cdot \grad_\theta \ell(\vect{x}_i, y_i; \vect{\theta}) \\
+    &= \sum_{i=1}^{n} \frac{1}{n} \cdot \grad_\theta \ell(\vect{x}_i, y_i; \vect{\theta}) \\
+    &= \frac{1}{n} \sum_{i=1}^{n} \grad_\theta \ell(\vect{x}_i, y_i; \vect{\theta}) = \grad f(\vect{\theta})
+\end{align*}
+\end{proof}
+
+Unbiasedness is critical: it ensures that stochastic updates move toward the minimum \textit{on average}, even though individual updates may be quite noisy. This fundamental insight dates back to Robbins and Monro's seminal 1951 paper~\cite{robbins1951stochastic}.
+
+\begin{aha}
+SGD's noise isn't a bug---it's a feature. The randomness helps escape shallow local minima and find flatter, more generalizable solutions. That's why SGD often outperforms exact gradient descent on non-convex problems.
+\end{aha}
+
+\begin{keyconcept}
+\textbf{The Dual Nature of SGD Noise:} Gradient noise is a double-edged sword:
+\begin{itemize}
+    \item \textbf{Benefits}: Noise helps escape shallow local minima, provides implicit regularization that improves generalization, and enables exploration of the loss landscape
+    \item \textbf{Costs}: Too much noise prevents convergence, causes oscillation around the optimum, and can destabilize training entirely
+\end{itemize}
+This is precisely why \textbf{batch size and learning rate tuning matter so much}. Batch size controls noise magnitude ($\sigma^2/B$), while learning rate controls how much that noise affects parameter updates. The art of SGD tuning is finding the sweet spot: enough noise for regularization and exploration, but not so much that convergence suffers.
+\end{keyconcept}
+
+\begin{checkpoint}
+Why is the SGD gradient estimate unbiased? Write out $\mathbb{E}[\nabla f_i(\theta)]$ and show it equals $\nabla f(\theta)$.
+\end{checkpoint}
+
+\subsection{The Variance-Computation Trade-off}
+
+\begin{theorem}{Variance of Stochastic Gradient}{ch10-sgd-variance}
+The variance of the stochastic gradient estimator is:
+\[
+    \Var[\vect{g}(\vect{\theta}; i)] = \E[\norm{\vect{g}(\vect{\theta}; i) - \grad f(\vect{\theta})}^2] = \frac{1}{n}\sum_{i=1}^{n} \norm{\grad_\theta \ell_i - \grad f(\vect{\theta})}^2
+\]
+This variance\index{gradient variance} depends on the heterogeneity of individual gradients across the dataset.
+\end{theorem}
+
+\begin{principle}
+Stochastic optimization embodies a fundamental trade-off:
+\begin{itemize}
+    \item \textbf{Full-batch}: Zero variance but $O(n)$ cost per update
+    \item \textbf{Single-sample SGD}: $O(1)$ cost but high variance
+    \item \textbf{Mini-batch}: Intermediate cost and variance, tunable via batch size
+\end{itemize}
+The optimal choice depends on the problem structure, hardware, and time constraints.
+\end{principle}
+
+%------------------------------------------------------------------------------
+\section{Mini-Batch Gradient Descent}
+\label{sec:ch10-mini-batch}
+
+Mini-batch gradient descent strikes a practical balance between computational efficiency and gradient accuracy.
+
+\begin{definition}{Mini-Batch Gradient}{ch10-mini-batch-gradient}
+Given a mini-batch\index{mini-batch|textbf} $\mathcal{B} \subset \{1, \ldots, n\}$ of size $B = |\mathcal{B}|$, the \textbf{mini-batch gradient} is:
+\[
+    \vect{g}_\mathcal{B}(\vect{\theta}) = \frac{1}{B} \sum_{i \in \mathcal{B}} \grad_\theta \ell(\vect{x}_i, y_i; \vect{\theta})
+\]
+\end{definition}
+
+\begin{definition}{Mini-Batch SGD Algorithm}{ch10-mini-batch-sgd}
+\textbf{Mini-Batch Stochastic Gradient Descent}\index{stochastic gradient descent|textbf}\index{SGD|see{stochastic gradient descent}} iteratively updates parameters:
+\begin{enumerate}
+    \item Sample a mini-batch $\mathcal{B}_t$ uniformly at random (without replacement within an epoch)
+    \item Update: $\vect{\theta}_{t+1} = \vect{\theta}_t - \eta_t \vect{g}_{\mathcal{B}_t}(\vect{\theta}_t)$
+\end{enumerate}
+where $\eta_t$ is the learning rate at iteration $t$.
+\end{definition}
+
+\begin{algorithm}[htbp]
+\caption{Mini-Batch Stochastic Gradient Descent}
+\label{alg:ch10-mini-batch-sgd}
+\begin{algorithmic}[1]
+\Require Dataset $\mathcal{D} = \{(\vect{x}_i, y_i)\}_{i=1}^n$, initial parameters $\vect{\theta}_0$
+\Require Learning rate schedule $\{\eta_t\}$, batch size $B$, number of epochs $E$
+\Ensure Optimized parameters $\vect{\theta}^*$
+\For{epoch $= 1, \ldots, E$}
+    \State Randomly shuffle indices $\{1, \ldots, n\}$
+    \For{$k = 0, 1, \ldots, \lfloor n/B \rfloor - 1$}
+        \State Form mini-batch: $\mathcal{B} \gets \{kB + 1, \ldots, (k+1)B\}$ (from shuffled indices)
+        \State Compute mini-batch gradient: $\vect{g} \gets \frac{1}{B}\sum_{i \in \mathcal{B}} \grad_\theta \ell(\vect{x}_i, y_i; \vect{\theta}_t)$
+        \State Update parameters: $\vect{\theta}_{t+1} \gets \vect{\theta}_t - \eta_t \vect{g}$
+        \State $t \gets t + 1$
+    \EndFor
+\EndFor
+\State \Return $\vect{\theta}_t$
+\end{algorithmic}
+\end{algorithm}
+
+\subsection{Variance Reduction Through Batching}
+
+\begin{theorem}{Mini-Batch Variance Reduction}{ch10-mini-batch-variance}
+For a mini-batch $\mathcal{B}$ of size $B$ sampled uniformly with replacement, the variance of the mini-batch gradient estimator is:
+\[
+    \Var[\vect{g}_\mathcal{B}(\vect{\theta})] = \frac{\sigma^2}{B}
+\]
+where $\sigma^2 = \Var[\vect{g}(\vect{\theta}; i)]$ is the single-sample variance. The variance decreases linearly with batch size\index{batch size|textbf}.
+
+\textbf{Note:} This theorem assumes sampling with replacement for analytical convenience. In practice, SGD samples without replacement within each epoch (shuffling the dataset and processing sequentially), which often has slightly better variance properties due to reduced redundancy in gradient estimates.
+\end{theorem}
+
+\begin{proof}
+When samples are drawn independently with replacement:
+\begin{align*}
+    \Var\left[\frac{1}{B}\sum_{i \in \mathcal{B}} \vect{g}(\vect{\theta}; i)\right] &= \frac{1}{B^2} \sum_{i \in \mathcal{B}} \Var[\vect{g}(\vect{\theta}; i)] \\
+    &= \frac{1}{B^2} \cdot B \cdot \sigma^2 = \frac{\sigma^2}{B}
+\end{align*}
+\end{proof}
+
+\begin{intuition}
+Mini-batch averaging is like polling voters. Asking 100 people gives you confidence within approximately $\pm$10\%. Asking 10,000 gives only approximately $\pm$1\%. The improvement scales with $\sqrt{n}$, so you get diminishing returns quickly. This is why batch sizes beyond 256-512 often don't help much without learning rate scaling.
+\end{intuition}
+
+\begin{intuition}
+Doubling the batch size halves the variance of the gradient estimate. However, it also doubles the computation per update. This suggests that simply increasing batch size is not always the path to faster training---sometimes it is better to take more noisy steps than fewer precise ones.
+\end{intuition}
+
+\begin{checkpoint}
+How does batch size affect gradient variance? What's the tradeoff with computation time?
+\end{checkpoint}
+
+\begin{commonmistakes}
+\begin{itemize}
+    \item \textbf{Mistake:} Believing larger batch sizes always lead to faster training
+
+    \textbf{Why it's wrong:} Larger batches reduce gradient variance but require more computation per step. Beyond a critical batch size, you hit diminishing returns: doubling batch size doubles compute but less than doubles progress. Very large batches can also hurt generalization.
+
+    \textbf{Correct understanding:} Optimal batch size depends on your compute budget and model. The ``linear scaling rule''\index{linear scaling rule} (scale learning rate with batch size) has limits. Often, moderate batch sizes (32--512) give the best compute-efficiency tradeoff.
+\end{itemize}
+\end{commonmistakes}
+
+\subsection{Epochs and Iterations}
+
+\begin{definition}{Epochs and Iterations}{ch10-epochs-iterations}
+An \textbf{iteration}\index{iteration|textbf} (or step) is a single parameter update using one mini-batch. An \textbf{epoch}\index{epoch|textbf} is one complete pass through the training data.
+
+For a dataset of size $n$ and batch size $B$:
+\[
+    \text{Iterations per epoch} = \left\lfloor \frac{n}{B} \right\rfloor
+\]
+\end{definition}
+
+\begin{example}{Iterations in Practice}{ch10-iterations-example}
+Consider training on ImageNet (1.28 million training images) with batch size 256:
+\[
+    \text{Iterations per epoch} = \frac{1,280,000}{256} = 5,000
+\]
+Training for 90 epochs (a common choice) involves $90 \times 5,000 = 450,000$ parameter updates.
+
+With batch size 8,192 (common for distributed training):
+\[
+    \text{Iterations per epoch} = \frac{1,280,000}{8,192} \approx 156
+\]
+This requires only $90 \times 156 = 14,040$ updates, but each update involves 32 times more computation.
+\end{example}
+
+%------------------------------------------------------------------------------
+\section{Variance Reduction Techniques}
+\label{sec:ch10-variance-reduction}
+
+While increasing batch size reduces variance, it also increases computational cost. More sophisticated variance reduction techniques aim to reduce noise without proportionally increasing computation.
+
+\subsection{Gradient Averaging with Control Variates}
+
+\begin{definition}{Control Variate}{ch10-control-variate}
+A \textbf{control variate}\index{control variate} is a random variable with known expectation that is correlated with our estimator. By subtracting an appropriately scaled control variate, we can reduce variance while maintaining unbiasedness.
+\end{definition}
+
+\begin{theorem}{Variance Reduction via Control Variates}{ch10-control-variate-theorem}
+Let $X$ be an unbiased estimator of $\mu$, and let $C$ be a random variable with $\E[C] = 0$. The estimator $\tilde{X} = X - \alpha C$ is also unbiased for any $\alpha$, and its variance is minimized at:
+\[
+    \alpha^* = \frac{\Cov(X, C)}{\Var(C)}
+\]
+giving minimum variance:
+\[
+    \Var(\tilde{X}) = \Var(X)\left(1 - \rho^2_{X,C}\right)
+\]
+where $\rho_{X,C}$ is the correlation between $X$ and $C$.
+\end{theorem}
+
+\subsection{SVRG: Stochastic Variance Reduced Gradient}
+
+\begin{definition}{SVRG Algorithm}{ch10-svrg}
+\textbf{Stochastic Variance Reduced Gradient}\index{SVRG|textbf}\index{variance reduction} (SVRG) periodically computes a full gradient $\tilde{\vect{\mu}} = \grad f(\tilde{\vect{\theta}})$ at a snapshot point $\tilde{\vect{\theta}}$, then uses it as a control variate:
+\[
+    \vect{g}_{\text{SVRG}} = \grad_\theta \ell_i(\vect{\theta}) - \grad_\theta \ell_i(\tilde{\vect{\theta}}) + \tilde{\vect{\mu}}
+\]
+This estimator has the same expectation as the full gradient but potentially much lower variance when $\vect{\theta}$ is close to $\tilde{\vect{\theta}}$.
+\end{definition}
+
+\begin{algorithm}[htbp]
+\caption{SVRG: Stochastic Variance Reduced Gradient}
+\label{alg:ch10-svrg}
+\begin{algorithmic}[1]
+\Require Dataset, initial $\tilde{\vect{\theta}}^0$, learning rate $\eta$, update frequency $m$, epochs $S$
+\Ensure Optimized parameters
+\For{$s = 1, \ldots, S$}
+    \State Compute full gradient: $\tilde{\vect{\mu}} \gets \frac{1}{n}\sum_{i=1}^n \grad_\theta \ell_i(\tilde{\vect{\theta}}^{s-1})$
+    \State Initialize: $\vect{\theta}_0 \gets \tilde{\vect{\theta}}^{s-1}$
+    \For{$t = 0, \ldots, m-1$}
+        \State Sample $i_t$ uniformly from $\{1, \ldots, n\}$
+        \State Compute variance-reduced gradient:
+        \State \quad $\vect{g}_t \gets \grad_\theta \ell_{i_t}(\vect{\theta}_t) - \grad_\theta \ell_{i_t}(\tilde{\vect{\theta}}^{s-1}) + \tilde{\vect{\mu}}$
+        \State Update: $\vect{\theta}_{t+1} \gets \vect{\theta}_t - \eta \vect{g}_t$
+    \EndFor
+    \State Set snapshot: $\tilde{\vect{\theta}}^s \gets \vect{\theta}_m$ (or average of iterates)
+\EndFor
+\State \Return $\tilde{\vect{\theta}}^S$
+\end{algorithmic}
+\end{algorithm}
+
+\begin{theorem}{SVRG Convergence}{ch10-svrg-convergence}
+For $\mu$-strongly convex functions with $L$-Lipschitz gradients, SVRG with appropriately chosen $\eta$ and $m$ achieves linear convergence:
+\[
+    \E[f(\tilde{\vect{\theta}}^s) - f(\vect{\theta}^*)] \leq \rho^s [f(\tilde{\vect{\theta}}^0) - f(\vect{\theta}^*)]
+\]
+for some $\rho < 1$ depending on $\mu/L$. This matches the rate of full-batch gradient descent while using only $O(n + m)$ gradient evaluations per epoch.
+\end{theorem}
+
+\subsection{SAG and SAGA}
+
+\begin{definition}{SAG: Stochastic Average Gradient}{ch10-sag}
+\textbf{SAG}\index{SAG|textbf}\index{stochastic average gradient|see{SAG}} maintains a table of gradient estimates $\{\vect{g}_i\}_{i=1}^n$, updating one entry per iteration:
+\begin{enumerate}
+    \item Sample index $i_t$ uniformly
+    \item Update table: $\vect{g}_{i_t} \gets \grad_\theta \ell_{i_t}(\vect{\theta}_t)$
+    \item Update parameters: $\vect{\theta}_{t+1} = \vect{\theta}_t - \frac{\eta}{n}\sum_{j=1}^n \vect{g}_j$
+\end{enumerate}
+\end{definition}
+
+\begin{definition}{SAGA Algorithm}{ch10-saga}
+\textbf{SAGA}\index{SAGA} modifies SAG to produce an unbiased gradient estimate:
+\[
+    \vect{g}_{\text{SAGA}} = \grad_\theta \ell_{i_t}(\vect{\theta}_t) - \vect{g}_{i_t}^{\text{old}} + \frac{1}{n}\sum_{j=1}^n \vect{g}_j
+\]
+where $\vect{g}_{i_t}^{\text{old}}$ is the previous stored gradient for example $i_t$.
+\end{definition}
+
+\begin{keyconcept}
+Variance reduction methods achieve the best of both worlds:
+\begin{itemize}
+    \item \textbf{Per-iteration cost}: $O(d)$, same as basic SGD
+    \item \textbf{Convergence rate}: Linear, matching full-batch gradient descent
+    \item \textbf{Trade-off}: Requires $O(nd)$ memory for gradient tables (SAGA/SAG) or periodic full-gradient computation (SVRG)
+\end{itemize}
+These methods are particularly valuable for convex problems of moderate size but are less commonly used in deep learning where implicit regularization from noise is often beneficial.
+\end{keyconcept}
+
+\begin{keyconcept}{When to Use Variance Reduction}
+Use SVRG/SAGA when: (1) your problem is convex, (2) dataset fits in memory for gradient tables, (3) you need exact convergence to the optimum. Use standard mini-batch SGD for deep learning---the implicit regularization from noise often helps generalization, and memory overhead of variance reduction is prohibitive.
+\end{keyconcept}
+
+\begin{checkpoint}
+What is variance reduction? Name one technique and explain how it works.
+\end{checkpoint}
+
+%------------------------------------------------------------------------------
+\section{SGD Convergence Analysis}
+\label{sec:ch10-sgd-convergence}
+
+Understanding when and why SGD converges is crucial for both theoretical insight and practical algorithm design. This section provides an overview of SGD convergence; for a comprehensive treatment of convergence rates, the descent lemma, and optimality conditions, see Chapter~\ref{ch:convergence-analysis}.
+
+\subsection{Assumptions for Convergence}
+
+\begin{definition}{Standard SGD Assumptions}{ch10-sgd-assumptions}
+Convergence proofs for SGD typically require:
+\begin{enumerate}
+    \item \textbf{$L$-Smoothness}\index{L-smooth|see{smoothness}}\index{smoothness}: $\norm{\grad f(\vect{\theta}) - \grad f(\vect{\phi})} \leq L \norm{\vect{\theta} - \vect{\phi}}$ for all $\vect{\theta}, \vect{\phi}$
+
+    \item \textbf{Bounded Variance}\index{bounded variance}\index{gradient noise}: $\E[\norm{\vect{g}(\vect{\theta}; i) - \grad f(\vect{\theta})}^2] \leq \sigma^2$ for all $\vect{\theta}$
+
+    \item \textbf{Unbiased Gradients}: $\E[\vect{g}(\vect{\theta}; i)] = \grad f(\vect{\theta})$
+\end{enumerate}
+\end{definition}
+
+\begin{intuition}
+$L$-smoothness means the gradient cannot change too rapidly---the function has bounded curvature. Bounded variance means no single example produces arbitrarily large gradients. Together, these ensure that stochastic updates cannot ``overshoot'' by too much.
+\end{intuition}
+
+\subsection{Convergence for Convex Functions}
+
+\begin{theorem}{SGD Convergence for Convex Functions}{ch10-sgd-convex-convergence}
+Let $f$ be convex and $L$-smooth with bounded variance $\sigma^2$. SGD with constant learning rate $\eta \leq 1/L$ satisfies:
+\[
+    \E[f(\bar{\vect{\theta}}_T)] - f(\vect{\theta}^*) \leq \frac{\norm{\vect{\theta}_0 - \vect{\theta}^*}^2}{2\eta T} + \frac{\eta L \sigma^2}{2}
+\]
+where $\bar{\vect{\theta}}_T = \frac{1}{T}\sum_{t=0}^{T-1} \vect{\theta}_t$ is the average of iterates.
+\end{theorem}
+
+\begin{proof}[Sketch]
+By $L$-smoothness:
+\[
+    f(\vect{\theta}_{t+1}) \leq f(\vect{\theta}_t) + \grad f(\vect{\theta}_t)\trans(\vect{\theta}_{t+1} - \vect{\theta}_t) + \frac{L}{2}\norm{\vect{\theta}_{t+1} - \vect{\theta}_t}^2
+\]
+Substituting $\vect{\theta}_{t+1} - \vect{\theta}_t = -\eta \vect{g}_t$ and taking expectations, the bias term $\E[\grad f(\vect{\theta}_t)\trans \vect{g}_t] = \norm{\grad f(\vect{\theta}_t)}^2$ provides progress, while the variance term $\E[\norm{\vect{g}_t}^2]$ contributes error. Summing over iterations and using convexity yields the result.
+\end{proof}
+
+\begin{important}
+The convergence bound has two terms:
+\begin{enumerate}
+    \item $\frac{\norm{\vect{\theta}_0 - \vect{\theta}^*}^2}{2\eta T}$: Decreases with iterations (convergence term)
+    \item $\frac{\eta L \sigma^2}{2}$: Constant error floor due to noise (variance term)
+\end{enumerate}
+With constant learning rate, SGD converges to a \textit{neighborhood} of the optimum, not the optimum itself. The neighborhood size is controlled by $\eta \sigma^2$.
+\end{important}
+
+\begin{theorem}{SGD with Decaying Learning Rate}{ch10-sgd-decay-convergence}
+For convex $f$ with learning rate $\eta_t = \frac{c}{\sqrt{t}}$ for appropriate constant $c$:
+\[
+    \E[f(\bar{\vect{\theta}}_T)] - f(\vect{\theta}^*) = O\left(\frac{1}{\sqrt{T}}\right)
+\]
+This slower rate is unavoidable for general convex functions with stochastic gradients.
+\end{theorem}
+
+\subsection{Convergence for Strongly Convex Functions}
+
+\begin{theorem}{SGD Convergence for Strongly Convex Functions}{ch10-sgd-strongly-convex}
+Let $f$ be $\mu$-strongly convex and $L$-smooth. With learning rate $\eta_t = \frac{2}{\mu(t+1)}$:
+\[
+    \E[f(\vect{\theta}_T)] - f(\vect{\theta}^*) = O\left(\frac{1}{T}\right)
+\]
+Strong convexity improves the rate from $O(1/\sqrt{T})$ to $O(1/T)$.
+\end{theorem}
+
+\begin{principle}
+The convergence rates can be summarized as:
+\begin{center}
+\begin{tabular}{lcc}
+\toprule
+\textbf{Setting} & \textbf{Full-Batch GD} & \textbf{SGD} \\
+\midrule
+Convex, smooth & $O(1/T)$ & $O(1/\sqrt{T})$ \\
+Strongly convex, smooth & $O(\rho^T)$ (linear) & $O(1/T)$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+SGD has slower asymptotic rates but cheaper iterations, often making it faster in wall-clock time.
+\end{principle}
+
+\subsection{Convergence for Non-Convex Functions}
+
+Deep learning involves non-convex optimization where we cannot hope to find global minima. Instead, we seek stationary points.
+
+\begin{theorem}{SGD Convergence to Stationary Points}{ch10-sgd-nonconvex}
+For $L$-smooth (possibly non-convex) $f$ bounded below by $f^*$, SGD with constant learning rate $\eta \leq 1/L$ satisfies:
+\[
+    \frac{1}{T}\sum_{t=0}^{T-1} \E[\norm{\grad f(\vect{\theta}_t)}^2] \leq \frac{2(f(\vect{\theta}_0) - f^*)}{\eta T} + \eta L \sigma^2
+\]
+\end{theorem}
+
+\begin{intuition}
+This result says that on average, SGD visits points with small gradients. It does not guarantee finding a global minimum or even a good local minimum---only that the gradient norm becomes small. The averaging is crucial: individual iterates may have large gradients, but the time-averaged gradient norm is controlled.
+\end{intuition}
+
+%------------------------------------------------------------------------------
+\section{Noise as Regularization}
+\label{sec:ch10-noise-regularization}
+
+One of the most surprising discoveries in deep learning is that the noise in SGD can improve generalization. Rather than being a nuisance to be minimized, gradient noise serves as a form of implicit regularization.
+
+\subsection{Why Stochastic Noise Helps}
+\label{sec:ch10-why-noise-helps}
+
+To understand why SGD's noise is beneficial, we can draw an analogy to physics. The gradient noise in SGD behaves like \textbf{thermal energy} in a physical system, giving parameters the ability to ``jiggle'' out of unfavorable configurations.
+
+\begin{intuition}
+\textbf{SGD as Thermal Annealing:}
+
+Imagine placing a ball on a bumpy surface with many valleys. If you shake the surface gently, the ball will:
+\begin{itemize}
+    \item \textbf{Escape shallow valleys}: Small bumps can't trap it---the shaking provides enough energy to climb out
+    \item \textbf{Settle in deep valleys}: Only wide, deep valleys can hold the ball despite the shaking
+    \item \textbf{Explore the landscape}: The ball samples many regions before settling
+\end{itemize}
+
+SGD's gradient noise plays exactly this role. The noise magnitude $\sigma^2/B$ (variance divided by batch size) acts like temperature. High temperature (small batch, large learning rate) enables exploration; low temperature (large batch, small learning rate) enables exploitation.
+
+\textbf{Simulated Annealing Connection:} This is precisely the principle behind simulated annealing in combinatorial optimization. Start with high temperature to explore globally, then gradually cool to converge locally. SGD with learning rate decay implements this automatically---early training explores with high ``temperature,'' late training refines with low ``temperature.''
+\end{intuition}
+
+\begin{keyconcept}
+\textbf{Three Ways Noise Improves Optimization:}
+
+\begin{enumerate}
+    \item \textbf{Escaping Sharp Minima}: Sharp minima have steep walls---the gradient magnitude is large near them. SGD's noise, scaled by the learning rate, creates fluctuations that can push parameters over these walls. Flat minima, with their gentle slopes, are more stable under noise.
+
+    \item \textbf{Implicit Regularization}: The noise acts like adding a penalty that discourages regions with high gradient variance. Mathematically, SGD approximately minimizes:
+    \[
+        \tilde{f}(\vect{\theta}) \approx f(\vect{\theta}) + \frac{\eta}{2B} \sum_{i=1}^n \norm{\grad_\theta \ell_i(\vect{\theta}) - \grad f(\vect{\theta})}^2
+    \]
+    This extra term penalizes solutions where individual gradients disagree---precisely the ``sharp'' regions where small data perturbations cause large gradient changes.
+
+    \item \textbf{Saddle Point Escape}: In high dimensions, most critical points are saddle points, not local minima. Saddle points have directions of positive and negative curvature. Gradient noise randomly perturbs along all directions, naturally pushing parameters along escape routes (negative curvature directions) that deterministic gradient descent would take exponentially long to find.
+\end{enumerate}
+\end{keyconcept}
+
+\begin{principle}
+\textbf{The Noise-Generalization Connection:}
+
+Why do solutions found with more noise often generalize better?
+\begin{itemize}
+    \item Training data is a noisy sample from the true distribution
+    \item Sharp minima ``memorize'' training data---they're optimal only for the exact training set
+    \item Flat minima are robust to data perturbations---they work for nearby distributions too
+    \item Test data comes from a distribution slightly different from training
+    \item Therefore, flat minima (found via noisy optimization) transfer better to test data
+\end{itemize}
+This is why smaller batch sizes, which inject more noise, often achieve better generalization despite higher training loss variance.
+\end{principle}
+
+\subsection{The Sharp vs. Flat Minima Hypothesis}
+
+\begin{definition}{Sharpness of Minima}{ch10-sharpness}
+The \textbf{sharpness}\index{sharpness|textbf} of a minimum $\vect{\theta}^*$ is characterized by the curvature of the loss landscape, often measured by the largest eigenvalue $\lambda_{\max}(\Hess f(\vect{\theta}^*))$ of the Hessian at that point.
+
+\textbf{Sharp minima}\index{sharp minima} have high curvature: small perturbations cause large changes in loss.
+
+\textbf{Flat minima}\index{flat minima|textbf} have low curvature: the loss remains low in a neighborhood around the minimum.
+\end{definition}
+
+\begin{principle}[title=Flat Minima Hypothesis]
+\textbf{(Debated)} Consider two minima $\vect{\theta}_{\text{sharp}}$ and $\vect{\theta}_{\text{flat}}$ with equal training loss. The hypothesis suggests that if the true data distribution differs slightly from the training distribution, the expected test loss satisfies:
+\[
+    \E[\ell_{\text{test}}(\vect{\theta}_{\text{flat}})] \leq \E[\ell_{\text{test}}(\vect{\theta}_{\text{sharp}})]
+\]
+when the perturbation is smaller than the ``width'' of the flat minimum.
+
+\textbf{Caveat:} This is a hypothesis, not a theorem. Dinh et al.\ (2017) and Andriushchenko et al.\ (2023) showed that sharpness measures are not invariant to reparameterization---the same function can appear ``sharp'' or ``flat'' depending on how parameters are scaled, without affecting generalization. The empirical correlation exists, but the causal mechanism remains unclear.
+\end{principle}
+
+\begin{intuition}
+Flat minima are more robust to the distribution shift between training and test data. If the minimum is sharp, even small differences between training and test distributions can push us onto the steep walls of the loss basin. Flat minima provide a buffer against such shifts.
+\end{intuition}
+
+\subsection{SGD Prefers Flat Minima}
+
+\begin{principle}[title={SGD's Preference for Flat Minima}]
+\textbf{(Empirical Observation)} For a quadratic loss basin with Hessian eigenvalues $\{\lambda_i\}$, SGD with learning rate $\eta$ and gradient noise covariance $\Sigma$ has been observed to have stationary distribution approximately proportional to:
+\[
+    p(\vect{\theta}) \propto \exp\left(-\frac{2}{\eta} f(\vect{\theta}) \cdot g(\Sigma, \Hess f)\right)
+\]
+where the function $g$ increases with the eigenvalues of $\Hess f$. This suggests SGD is less likely to remain in sharp minima.
+
+\textbf{Note:} This is an empirical observation under specific assumptions (quadratic approximation, isotropic noise), not a general theorem. The practical implications for deep networks remain an active research area.
+\end{principle}
+
+\begin{keyconcept}
+The noise in SGD acts like temperature in simulated annealing:
+\begin{enumerate}
+    \item High noise (small batch, large learning rate) allows escape from sharp minima
+    \item Low noise (large batch, small learning rate) enables fine convergence
+    \item The learning rate schedule implicitly ``anneals'' this temperature
+\end{enumerate}
+This explains why SGD often finds solutions that generalize better than those found by full-batch gradient descent, even when both reach the same training loss.
+\end{keyconcept}
+
+\begin{important}
+The flat minima hypothesis remains debated in the research community. Sharpness metrics are not invariant to reparameterization---the ``sharpness'' of a minimum can change without affecting generalization. The empirical correlation between flatness and generalization is real, but the causal mechanism is unclear.
+\end{important}
+
+\subsection{The Generalization Benefits of Noise}
+
+\begin{example}{Noise Improves Generalization}{ch10-noise-generalization}
+Consider training identical neural networks with SGD versus full-batch gradient descent to the same final training loss. Empirically:
+\begin{itemize}
+    \item SGD typically achieves 1-3\% better test accuracy
+    \item The gap increases with smaller batch sizes
+    \item Adding explicit noise to full-batch updates partially recovers this benefit
+\end{itemize}
+This suggests the stochasticity itself, not just faster training, contributes to better generalization.
+\end{example}
+
+\begin{principle}[title=Noise Injection as Approximate Regularization]
+Adding Gaussian noise $\vect{\epsilon} \sim \mathcal{N}(\vect{0}, \sigma^2 \mat{I})$ to gradients is \textit{approximately} equivalent (to first order in $\eta$) to adding a regularization term:
+\[
+    \tilde{f}(\vect{\theta}) = f(\vect{\theta}) + \frac{\eta \sigma^2}{2} \norm{\grad f(\vect{\theta})}^2
+\]
+This penalizes regions with large gradients, which correspond to sharp minima.
+
+\textbf{Note:} This is a first-order approximation that holds for small $\eta$ and assumes specific noise structure. The equivalence is not exact, and higher-order effects can be significant in practice.
+\end{principle}
+
+%------------------------------------------------------------------------------
+\section{Learning Rate Schedules: Theoretical Motivation}
+\label{sec:ch10-learning-rate-schedules}
+
+The learning rate is critical for SGD convergence. Here we examine why varying the learning rate during training is theoretically motivated; for practical schedule selection and implementation, see Chapter~\ref{ch:advanced-optimizers}.
+
+\begin{principle}
+Recall the convergence bound for convex SGD:
+\[
+    \E[f(\bar{\vect{\theta}}_T)] - f(\vect{\theta}^*) \leq \frac{\norm{\vect{\theta}_0 - \vect{\theta}^*}^2}{2\eta T} + \frac{\eta L \sigma^2}{2}
+\]
+The two terms pull in opposite directions:
+\begin{itemize}
+    \item Large $\eta$: Makes the first term small (fast progress) but the second term large (noisy convergence)
+    \item Small $\eta$: Makes the second term small (precise convergence) but the first term large (slow progress)
+\end{itemize}
+This motivates \textbf{learning rate decay}: start with large $\eta$ for rapid exploration, then reduce $\eta$ for precise convergence.
+\end{principle}
+
+\begin{theorem}{Robbins-Monro Conditions}{ch10-robbins-monro}
+A learning rate schedule\index{learning rate schedule|textbf} $\{\eta_t\}$ guarantees SGD convergence to the optimum (not just a neighborhood) if:
+\[
+    \sum_{t=1}^{\infty} \eta_t = \infty \quad \text{and} \quad \sum_{t=1}^{\infty} \eta_t^2 < \infty
+\]
+The first condition ensures we can reach any point; the second ensures noise averages out. The schedule $\eta_t = c/t$ satisfies both conditions. Note that $\eta_t = c/\sqrt{t}$ satisfies only the first condition (since $\sum (c/\sqrt{t})^2 = c^2 \sum 1/t = \infty$), which is why it converges to a neighborhood rather than the exact optimum.
+\end{theorem}
+
+\begin{keyconcept}
+The theoretical insight is simple: \textbf{noise accumulates under constant learning rate}, preventing exact convergence. Decaying the learning rate allows the algorithm to ``settle down'' as it approaches the optimum. This same principle explains why warmup\index{warm-up|textbf} helps---early in training, moment estimates (for Adam) and gradient statistics are unreliable, so conservative steps prevent overshooting.
+
+For specific schedules (step decay, cosine annealing, warmup strategies) and implementation guidance, see Chapter~\ref{ch:advanced-optimizers}.
+\end{keyconcept}
+
+%------------------------------------------------------------------------------
+\section{Batch Size Effects}
+\label{sec:ch10-batch-size}
+
+The choice of batch size profoundly affects training dynamics, generalization, and computational efficiency.
+
+\subsection{The Batch Size Trade-off}
+
+\begin{definition}{Batch Size Trade-offs}{ch10-batch-tradeoffs}
+\begin{center}
+\begin{tabular}{lcc}
+\toprule
+\textbf{Aspect} & \textbf{Small Batch} & \textbf{Large Batch} \\
+\midrule
+Gradient variance & High & Low \\
+Iterations per epoch & Many & Few \\
+GPU utilization & Poor & Good \\
+Implicit regularization\index{implicit regularization} & Strong & Weak \\
+Memory requirement & Low & High \\
+Communication overhead\index{distributed training} & High (distributed) & Low (distributed) \\
+\bottomrule
+\end{tabular}
+\end{center}
+\end{definition}
+
+\subsection{The Linear Scaling Rule}
+
+\begin{principle}[title=Linear Scaling Rule]
+\textbf{(Empirical Heuristic)} When increasing batch size by factor $k$, the learning rate should also be increased by factor $k$ to maintain similar training dynamics\index{linear scaling rule|textbf}:
+\[
+    B \to kB \implies \eta \to k\eta
+\]
+This keeps the expected parameter update magnitude roughly constant across batch sizes.
+
+\textbf{Important:} This is an empirical heuristic from Goyal et al.\ (2017), not a theorem with universal guarantees. It works well in practice for moderate batch sizes but breaks down for very large batches and requires warmup to apply safely.
+\end{principle}
+
+\begin{proof}[Intuition]
+The expected update is:
+\[
+    \E[\Delta \vect{\theta}] = -\eta \E[\vect{g}_B] = -\eta \grad f(\vect{\theta})
+\]
+This is independent of $B$ but depends on $\eta$. To maintain the same expected progress per unit of data processed, we scale $\eta$ with $B$.
+\end{proof}
+
+\begin{important}
+The linear scaling rule has limits:
+\begin{itemize}
+    \item Fails for very large batches (typically $B > 8192$)
+    \item Requires warmup when applied to large $\eta$
+    \item May hurt generalization even if training progresses normally
+\end{itemize}
+Beyond a critical batch size, additional techniques (LARS, LAMB) may help, though their benefits are context-dependent.
+\end{important}
+
+\subsection{Large Batch Training}
+
+\begin{warstory}
+\textbf{How Facebook Trained ImageNet in One Hour}
+
+In 2017, Goyal et al.~\cite{goyal2017accurate} at Facebook AI Research achieved what seemed impossible: training ResNet-50 on ImageNet to full accuracy in just one hour, using 256 GPUs with batch size 8,192. Previous state-of-the-art took 29 hours with batch size 256.
+
+The key insight was the \textbf{linear scaling rule with gradual warmup}. They found that simply multiplying the learning rate by $k$ when increasing batch size by $k$ caused divergence in the first few epochs. The solution was a 5-epoch warmup period, gradually ramping the learning rate from a small initial value to their target (scaled according to batch size).
+
+This discovery enabled a new paradigm: distributed training at scale. The same principles later powered GPT-3's training, which used batch sizes up to 3.2 million tokens. Without Facebook's empirical work establishing when and how batch scaling works, modern LLM training would be far more difficult.
+
+\textbf{Lesson:} Theoretical principles (linear scaling) require empirical refinements (warmup) to work at scale. The gap between theory and practice is where real engineering happens.
+\end{warstory}
+
+\begin{definition}{Layer-wise Adaptive Rate Scaling (LARS)}{ch10-lars}
+\textbf{LARS}\index{LARS|textbf}\index{layer-wise adaptive rate scaling|see{LARS}} adapts the learning rate for each layer based on the ratio of parameter and gradient norms:
+\[
+    \eta^{(l)} = \eta_{\text{base}} \cdot \frac{\norm{\vect{\theta}^{(l)}}}{\norm{\grad_{\vect{\theta}^{(l)}} f} + \lambda \norm{\vect{\theta}^{(l)}}}
+\]
+where $l$ indexes layers and $\lambda$ is a weight decay coefficient.
+\end{definition}
+
+\begin{principle}[title=LARS Enables Extreme Batch Sizes]
+\textbf{(Empirical Result)} LARS has been used to train with batch sizes up to 32,768 on ImageNet while maintaining accuracy comparable to small-batch training. The key insight is that different layers have vastly different gradient-to-parameter ratios, and a single global learning rate may be suboptimal. Results vary depending on architecture and hyperparameter tuning.
+\end{principle}
+
+\subsection{Generalization Gap}
+
+\begin{definition}{Generalization Gap}{ch10-generalization-gap}
+The \textbf{generalization gap}\index{generalization gap|textbf} refers to the empirical observation that models trained with very large batches often achieve worse test accuracy than those trained with small batches, even when reaching the same training loss.
+\end{definition}
+
+\begin{keyconcept}
+\textbf{Batch Size Tradeoffs---The Complete Picture:}
+
+\textbf{Large batches} offer:
+\begin{itemize}
+    \item More stable, lower-variance gradient estimates
+    \item Better hardware utilization (GPU parallelism)
+    \item Fewer communication rounds in distributed training
+\end{itemize}
+But may suffer from:
+\begin{itemize}
+    \item Worse generalization (the ``generalization gap'')
+    \item Convergence to sharper minima
+    \item Diminishing returns beyond a critical batch size
+\end{itemize}
+
+\textbf{Small batches} offer:
+\begin{itemize}
+    \item Stronger implicit regularization from noise
+    \item Better exploration of the loss landscape
+    \item Often better final generalization
+\end{itemize}
+But suffer from:
+\begin{itemize}
+    \item Slower wall-clock time (poor hardware utilization)
+    \item Higher variance requiring smaller learning rates
+    \item More gradient computations per epoch
+\end{itemize}
+
+\textbf{Note on the generalization gap debate:} Recent research has questioned whether large-batch generalization problems are fundamental or merely artifacts of insufficient hyperparameter tuning. Some studies show that with proper learning rate scaling, warmup, and regularization adjustments, large batches can match small-batch generalization. The debate remains active, but practitioners should be aware that naively scaling batch size without adjusting other hyperparameters typically hurts generalization.
+\end{keyconcept}
+
+\begin{important}
+\textbf{Failure Mode:} Gradient Variance Explosion
+
+\textbf{What happens:} Training loss oscillates wildly or diverges to NaN within the first few hundred iterations.
+
+\textbf{Why it happens:} When batch size is too small, individual gradient estimates have high variance. Combining this with a learning rate tuned for larger batches amplifies the noise, causing parameter updates to overshoot repeatedly. The variance scales as $\sigma^2/B$, so halving the batch size doubles the gradient variance.
+
+\textbf{How to spot it:} Monitor gradient norms per iteration---explosive variance appears as gradient norms that spike by 10--100x between consecutive steps.
+
+\textbf{How to fix it:} Either increase batch size, reduce learning rate proportionally (halve LR when halving batch size), or add gradient clipping as a safety net.
+\end{important}
+
+%------------------------------------------------------------------------------
+\section{Comparison with Full-Batch Methods}
+\label{sec:ch10-comparison}
+
+When should you use stochastic methods versus full-batch optimization? The key tradeoff is illustrated in Figure~\ref{fig:sgd-vs-gd}.
+
+\begin{figure}[htbp]
+    \centering
+    \pdftooltip{\includegraphics[width=0.85\textwidth]{../../images/diagrams/ch10/sgd-vs-gd.png}}{Contour plot showing two optimization paths from the same starting point to a minimum. The full-batch GD path follows a smooth curved trajectory. The SGD path shows a jagged, noisy trajectory but reaches a similar endpoint. Both paths navigate through elliptical contour lines representing the loss surface.}
+    \caption{SGD vs full-batch gradient descent on a quadratic loss surface. Full-batch GD follows a smooth trajectory to the minimum. SGD takes a noisier path due to gradient variance from mini-batches, but each step is much cheaper to compute. On large datasets, SGD reaches a good solution faster despite the noise.}
+    \label{fig:sgd-vs-gd}
+\end{figure}
+
+\subsection{Computational Considerations}
+
+\begin{theorem}{Wall-Clock Time Comparison}{ch10-wall-clock}
+Let $T_{\text{full}}$ be the time for one full-batch gradient computation and $T_{\text{mini}}$ be the time for one mini-batch gradient. For a problem requiring $K_{\text{full}}$ full-batch iterations versus $K_{\text{mini}}$ mini-batch iterations:
+\[
+    \text{Mini-batch is faster if: } K_{\text{mini}} \cdot T_{\text{mini}} < K_{\text{full}} \cdot T_{\text{full}}
+\]
+With batch size $B$ and dataset size $n$:
+\begin{itemize}
+    \item $T_{\text{mini}} \approx \frac{B}{n} T_{\text{full}}$
+    \item $K_{\text{mini}} \gg K_{\text{full}}$ typically, but the product is often smaller
+\end{itemize}
+\end{theorem}
+
+\subsection{Memory Considerations}
+
+\begin{important}
+Full-batch methods require storing gradients for all examples simultaneously, which may not fit in GPU memory. For a model with $d$ parameters and dataset size $n$:
+\begin{itemize}
+    \item Full-batch memory: $O(d + n \cdot \text{activation memory})$
+    \item Mini-batch memory: $O(d + B \cdot \text{activation memory})$
+\end{itemize}
+For large models and datasets, mini-batch may be the only feasible option.
+\end{important}
+
+\subsection{Generalization Considerations}
+
+\begin{principle}
+The choice between full-batch and stochastic methods should consider:
+\begin{enumerate}
+    \item \textbf{Dataset size}: SGD excels for large datasets
+    \item \textbf{Required precision}: Full-batch for high-precision convex optimization
+    \item \textbf{Generalization}: SGD often generalizes better in deep learning
+    \item \textbf{Hardware}: GPU parallelism favors moderate batch sizes
+    \item \textbf{Time constraints}: SGD provides useful models faster
+\end{enumerate}
+\end{principle}
+
+\begin{table}[htbp]
+\centering
+\caption{Summary comparison of optimization approaches.}
+\label{tab:ch10-comparison}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+\textbf{Property} & \textbf{Full-Batch GD} & \textbf{Mini-Batch SGD} & \textbf{Pure SGD} \\
+\midrule
+Gradient accuracy & Exact & Moderate noise & High noise \\
+Convergence rate (theory) & Fast & Moderate & Slow \\
+Wall-clock time (practice) & Slow & Fast & Moderate \\
+Memory requirement & High & Moderate & Low \\
+Implicit regularization & None & Moderate & Strong \\
+GPU utilization & Good & Good & Poor \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+%------------------------------------------------------------------------------
+\section{Practical Considerations for Deep Learning}
+\label{sec:ch10-practical}
+
+We now synthesize the theoretical insights into practical guidelines for training deep networks.
+
+\subsection{Choosing Batch Size}
+
+\begin{definition}{Batch Size Selection Guidelines}{ch10-batch-selection}
+\begin{enumerate}
+    \item \textbf{Start with 32-256}: These sizes work well for most problems and fit on a single GPU
+
+    \item \textbf{Scale with hardware}: Use the largest batch that fits in memory while maintaining high GPU utilization
+
+    \item \textbf{Consider generalization}: Smaller batches often generalize better; only increase if training time is the bottleneck
+
+    \item \textbf{Use powers of 2}: GPU memory alignment is optimized for powers of 2
+
+    \item \textbf{Account for gradient accumulation}\index{gradient accumulation}: If the desired batch doesn't fit, accumulate gradients over multiple forward passes
+\end{enumerate}
+\end{definition}
+
+\subsection{Learning Rate and Optimizer Selection}
+
+Batch size and learning rate are tightly coupled---the linear scaling rule (Section~\ref{sec:ch10-batch-size}) connects them. For detailed guidance on learning rate selection, schedules, optimizer choice (SGD vs. Adam vs. AdamW), and debugging training failures, see Chapter~\ref{ch:advanced-optimizers}.
+
+\subsection{Monitoring Training}
+
+\begin{important}
+Key metrics to monitor during stochastic optimization:
+\begin{enumerate}
+    \item \textbf{Training loss}: Should decrease overall; small fluctuations are normal
+    \item \textbf{Validation loss}: Should track training loss; divergence indicates overfitting
+    \item \textbf{Gradient norm}: Large spikes may indicate instability; clipping may be needed
+    \item \textbf{Learning rate}: Verify schedule is applied correctly
+    \item \textbf{Parameter norms}: Should be relatively stable; explosive growth indicates problems
+\end{enumerate}
+\end{important}
+
+\begin{keyconcept}
+When training fails or stalls, the cause is usually related to learning rate, batch size, or gradient magnitude. For a systematic guide to diagnosing common failure modes (NaN losses, oscillating loss, poor generalization), see Chapter~\ref{ch:gradient-descent}.
+\end{keyconcept}
+
+\begin{whatbreaks}
+\textbf{Exercise 1:} Set batch size to 1 (pure SGD) and measure gradient variance over 1000 iterations. Now use batch size 512. Plot both variance curves. What's the relationship?
+
+\textbf{Exercise 2:} Set batch size equal to your full dataset (full-batch GD). Compare convergence per \textit{epoch} vs per \textit{gradient computation} to mini-batch SGD. When is each better?
+\end{whatbreaks}
+
+%------------------------------------------------------------------------------
+\section{Common Failure Modes}
+\label{sec:ch10-common-failures}
+
+Understanding how SGD fails is as important as understanding how it succeeds. This section catalogs the most common failure modes, their symptoms, and remedies.
+
+\subsection{Diagnostic Reference Table}
+
+\begin{table}[htbp]
+\centering
+\small
+\caption{SGD Failure Mode Diagnostics: Symptoms and Fixes}
+\label{tab:ch10-failure-modes}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{2.8cm} >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X@{}}
+\toprule
+\textbf{Symptom} & \textbf{Likely Cause} & \textbf{Recommended Fixes} \\
+\midrule
+Loss becomes NaN or Inf & LR too high; numerical overflow; log(0) or div/0 in loss & Reduce LR by 10x; add gradient clipping; check data for invalid values \\
+\addlinespace
+Loss stuck at initial value & LR too low; vanishing gradients; dead ReLUs & Increase LR by 10x; check gradient norms; use LeakyReLU or GELU \\
+\addlinespace
+Loss oscillates wildly & LR too high; batch size too small; high gradient variance & Reduce LR by 3--5x; increase batch size; add gradient clipping \\
+\addlinespace
+Loss plateaus mid-training & Stuck at saddle point; poor conditioning; LR decay too aggressive & Try larger LR briefly; switch to Adam; add batch normalization \\
+\addlinespace
+Training good, validation poor & Overfitting; batch size too large & Add dropout/weight decay; reduce batch size; use early stopping \\
+\addlinespace
+Both losses high & Underfitting; model too small; LR decayed too fast & Increase model capacity; reduce regularization; extend training \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Learning Rate Failure Modes}
+
+\begin{whatbreaks}
+\textbf{Failure Mode: Learning Rate Too High}
+
+\textbf{What you'll see:}
+\begin{itemize}
+    \item Loss spikes to NaN/Inf within first 100 iterations
+    \item Loss oscillates with increasing amplitude
+    \item Gradient norms explode (values $> 10^6$)
+    \item Parameters grow unboundedly
+\end{itemize}
+
+\textbf{Why it happens:}
+
+When $\eta > 2/L$ (where $L$ is the smoothness constant), gradient descent \textit{diverges} even for convex functions. Each step overshoots the minimum, landing on the opposite side with larger error. The update $\theta_{t+1} = \theta_t - \eta g_t$ moves \textit{past} the optimum, and subsequent updates amplify the oscillation.
+
+Mathematically, for a quadratic $f(\theta) = \frac{L}{2}\theta^2$, the update becomes:
+\[
+    \theta_{t+1} = (1 - \eta L)\theta_t
+\]
+If $\eta L > 2$, then $|1 - \eta L| > 1$ and iterates explode exponentially.
+
+\textbf{How to diagnose:}
+\begin{enumerate}
+    \item Monitor gradient norm: if it grows by $>$10x over 100 steps, LR is too high
+    \item Check loss curve: exponential growth (not just noise) indicates divergence
+    \item Test: reduce LR by 10x---if training stabilizes, original LR was excessive
+\end{enumerate}
+
+\textbf{Fixes:}
+\begin{enumerate}
+    \item Reduce learning rate by 10x as emergency fix
+    \item Add gradient clipping: $g \leftarrow g \cdot \min(1, c/\|g\|)$ with $c = 1.0$
+    \item Use learning rate warmup: start at 0.1x target, ramp up over 1000 steps
+    \item Switch to Adam, which adapts per-parameter learning rates
+\end{enumerate}
+\end{whatbreaks}
+
+\begin{whatbreaks}
+\textbf{Failure Mode: Learning Rate Too Low}
+
+\textbf{What you'll see:}
+\begin{itemize}
+    \item Loss decreases imperceptibly slowly (near-flat curve)
+    \item Training takes 10-100x longer than expected
+    \item Loss plateaus at a high value and refuses to decrease
+    \item Gradient norms are healthy but parameter updates are tiny
+\end{itemize}
+
+\textbf{Why it happens:}
+
+With $\eta \ll 1/L$, each gradient step makes negligible progress. The convergence bound shows error decreases as:
+\[
+    f(\theta_T) - f(\theta^*) \leq \frac{\|\theta_0 - \theta^*\|^2}{2\eta T}
+\]
+Halving $\eta$ doubles the iterations needed. If $\eta$ is 100x too small, training effectively stalls.
+
+Additionally, a too-small learning rate cannot escape saddle points. The noise in SGD ($\sigma^2/B$) combined with a tiny $\eta$ produces updates too small to climb out of flat regions or saddle points that dominate high-dimensional landscapes.
+
+\textbf{How to diagnose:}
+\begin{enumerate}
+    \item Compute relative update size: $\|\Delta\theta\|/\|\theta\|$ per step
+    \item If $< 10^{-6}$, updates are ineffective
+    \item Compare to known baselines: ResNet on CIFAR should show clear progress within 100 iterations with LR $\approx 0.1$
+\end{enumerate}
+
+\textbf{Fixes:}
+\begin{enumerate}
+    \item Increase learning rate by 10x; repeat until training progresses
+    \item Use learning rate finder: sweep LR from $10^{-7}$ to $10$, find where loss decreases fastest
+    \item Check for bugs: ensure optimizer.step() is called, gradients are not detached
+    \item For saddle points: add momentum or switch to Adam (adaptive methods escape saddles faster)
+\end{enumerate}
+\end{whatbreaks}
+
+%------------------------------------------------------------------------------
+\section{Diagnosing SGD Training Issues}
+\label{sec:ch10-diagnosing}
+
+When SGD training fails or performs poorly, the symptoms often point to specific causes. This section provides a systematic approach to diagnosing and fixing common problems.
+
+\subsection{Batch Size Diagnostics}
+
+\begin{important}
+\textbf{Symptom: Training loss oscillates wildly without converging}
+
+\textbf{Likely cause:} Batch size too small for the current learning rate.
+
+\textbf{Diagnosis:} Compute the gradient variance ratio:
+\[
+    \text{Variance Ratio} = \frac{\Var[\norm{\vect{g}_B}]}{\E[\norm{\vect{g}_B}]^2}
+\]
+If this ratio exceeds 1.0, your gradient estimates are dominated by noise rather than signal.
+
+\textbf{Fixes (in order of preference):}
+\begin{enumerate}
+    \item Reduce learning rate by factor of 2--4
+    \item Increase batch size by factor of 2--4
+    \item Add gradient clipping at $\norm{\vect{g}} \leq 1.0$
+\end{enumerate}
+\end{important}
+
+\begin{important}
+\textbf{Symptom: Training loss decreases smoothly but generalization is poor}
+
+\textbf{Likely cause:} Batch size too large, reducing implicit regularization.
+
+\textbf{Diagnosis:} Check if your batch size exceeds the ``critical batch size'' where larger batches stop improving convergence speed. Empirically, this is often 2--8K for vision tasks and 256--2K for language tasks.
+
+\textbf{Fixes:}
+\begin{enumerate}
+    \item Reduce batch size (if memory allows faster iteration)
+    \item Add explicit regularization: increase weight decay by 2--4x
+    \item Add label smoothing ($\epsilon = 0.1$) or mixup augmentation
+    \item Use learning rate warmup over 5--10\% of training
+\end{enumerate}
+\end{important}
+
+\subsection{Learning Rate Diagnostics}
+
+\begin{commonmistakes}
+\begin{itemize}
+    \item \textbf{Mistake:} Using the same learning rate when changing batch size
+
+    \textbf{Why it's wrong:} The linear scaling rule states that doubling batch size requires doubling learning rate to maintain training dynamics. Forgetting this coupling is a common source of training failures.
+
+    \textbf{Correct approach:} When scaling batch size by factor $k$, scale learning rate by $k$ (linear rule) or $\sqrt{k}$ (square root rule for very large batches). Use warmup when applying the linear rule.
+\end{itemize}
+\end{commonmistakes}
+
+\begin{principle}
+\textbf{The SGD Diagnostic Flowchart:}
+
+\begin{enumerate}
+    \item \textbf{Loss is NaN or Inf after few steps?}
+    \begin{itemize}
+        \item Check for numerical issues (log of zero, division by zero)
+        \item Reduce learning rate by 10x
+        \item Add gradient clipping at 1.0
+    \end{itemize}
+
+    \item \textbf{Loss oscillates without clear downward trend?}
+    \begin{itemize}
+        \item Learning rate too high: reduce by 3x
+        \item Batch size too small: increase by 2--4x
+        \item Gradient variance too high: add gradient clipping
+    \end{itemize}
+
+    \item \textbf{Loss decreases very slowly (near-flat curve)?}
+    \begin{itemize}
+        \item Learning rate too low: increase by 3--10x
+        \item Poor initialization: check weight initialization scheme
+        \item Vanishing gradients: add skip connections or use different activation
+    \end{itemize}
+
+    \item \textbf{Loss plateaus at a high value?}
+    \begin{itemize}
+        \item Learning rate too low to escape saddle point: increase or add momentum
+        \item Poor conditioning: switch to Adam or add batch normalization
+        \item Local minimum: try different initialization or learning rate warmup
+    \end{itemize}
+
+    \item \textbf{Training loss good but validation loss poor?}
+    \begin{itemize}
+        \item Overfitting: increase regularization (weight decay, dropout)
+        \item Batch size too large: reduce or add data augmentation
+        \item Training too long: use early stopping
+    \end{itemize}
+\end{enumerate}
+\end{principle}
+
+\subsection{Variance vs. Bias Tradeoff Symptoms}
+
+\begin{keyconcept}
+\textbf{High Variance Symptoms} (batch size too small):
+\begin{itemize}
+    \item Loss curve looks like a noisy sawtooth
+    \item Gradient norms vary by $>$10x between consecutive steps
+    \item Model predictions change dramatically between consecutive checkpoints
+    \item Training is unstable even with gradient clipping
+\end{itemize}
+
+\textbf{High Bias Symptoms} (batch size too large or learning rate too low):
+\begin{itemize}
+    \item Loss curve is smooth but converges to a suboptimal value
+    \item Training and validation curves converge to similar (but high) values
+    \item Model underfits even simple patterns in the data
+    \item Increasing training time does not improve performance
+\end{itemize}
+
+\textbf{The Sweet Spot:}
+\begin{itemize}
+    \item Loss curve shows steady descent with mild fluctuation
+    \item Gradient norms vary by 2--5x between steps (some noise is healthy)
+    \item Training loss continues decreasing while validation loss stabilizes
+\end{itemize}
+\end{keyconcept}
+
+\subsection{Monitoring Checklist}
+
+\begin{important}
+\textbf{Essential Metrics to Track During SGD Training:}
+
+\begin{enumerate}
+    \item \textbf{Gradient norm} (per step):
+    \begin{itemize}
+        \item Normal range: 0.1 to 10 (depends on architecture)
+        \item If $>$ 100: Enable gradient clipping immediately
+        \item If $< 10^{-4}$: Check for vanishing gradients (threshold depends on model scale)
+    \end{itemize}
+
+    \item \textbf{Gradient variance} (running estimate):
+    \begin{itemize}
+        \item Track $\Var[\norm{\vect{g}}] / \E[\norm{\vect{g}}]^2$ over a window of 100 steps
+        \item If $>$ 2.0: Consider larger batch or smaller learning rate
+    \end{itemize}
+
+    \item \textbf{Loss ratio} (training vs validation):
+    \begin{itemize}
+        \item Ratio $>$ 2: Overfitting, increase regularization
+        \item Ratio $\approx$ 1 and both high: Underfitting, increase capacity or reduce regularization
+    \end{itemize}
+
+    \item \textbf{Parameter update magnitude}:
+    \begin{itemize}
+        \item Track $\norm{\Delta \vect{\theta}} / \norm{\vect{\theta}}$ (relative update size)
+        \item If $>$ 0.1 per step: Updates too large, reduce learning rate
+        \item If $<$ 0.0001 per step: Updates too small, increase learning rate
+    \end{itemize}
+\end{enumerate}
+\end{important}
+
+\begin{warstory}
+\textbf{The Batch Size That Broke ImageNet}
+
+In 2017, Facebook AI trained ResNet-50 on ImageNet in one hour using batch size 8,192---previously thought impossible. But when other teams tried batch size 32,768, training collapsed: the model converged to a solution with 5\% worse accuracy than the small-batch baseline.
+
+The diagnosis revealed two issues: (1) the linear scaling rule breaks down at extreme batch sizes because gradient noise helps generalization, and (2) the first few iterations with massive batch sizes destabilized training because the linear scaling rule assumes gradients are ``typical,'' which fails at initialization.
+
+The fix required two techniques: (1) Learning rate warmup over the first 5 epochs (starting at 0 and linearly increasing), and (2) Layer-wise Adaptive Rate Scaling (LARS), which adjusts learning rates per layer based on the ratio of parameter norm to gradient norm.
+
+\textbf{Lesson:} When pushing batch size boundaries, watch for generalization degradation, not just training convergence. The linear scaling rule is a starting point, not a guarantee.
+\end{warstory}
+
+%------------------------------------------------------------------------------
+\section{Exercises}
+\label{sec:ch10-exercises}
+
+\begin{exercise}{Variance of Mini-Batch Gradient}{ch10-ex-variance}
+Consider a dataset with $n = 1000$ examples where individual gradients have variance $\sigma^2 = 100$.
+\begin{enumerate}[label=(\alph*)]
+    \item Compute the variance of the mini-batch gradient for batch sizes $B = 1, 10, 100, 1000$.
+    \item How many mini-batch updates ($B = 32$) provide equivalent gradient information to one full-batch update?
+\end{enumerate}
+\end{exercise}
+
+\begin{exercise}{SGD Convergence}{ch10-ex-convergence}
+Consider minimizing $f(\theta) = \frac{1}{2}\theta^2$ using SGD with stochastic gradient $g(\theta) = \theta + \epsilon$, $\epsilon \sim \mathcal{N}(0, \sigma^2)$.
+\begin{enumerate}[label=(\alph*)]
+    \item Verify unbiasedness of $g(\theta)$ and derive $\E[\theta_{t+1}] = (1-\eta)\E[\theta_t]$.
+    \item Find convergence conditions on $\eta$ and compute steady-state $\Var(\theta_t)$.
+\end{enumerate}
+\end{exercise}
+
+\begin{exercise}{Learning Rate Schedules}{ch10-ex-lr-schedule}
+Compare constant, step decay, and cosine annealing schedules on MNIST. Plot training/validation loss and identify which achieves best final accuracy.
+\end{exercise}
+
+\begin{exercise}{Batch Size and Generalization}{ch10-ex-batch-size}
+Train ResNet-18 on CIFAR-10 with batch sizes $B \in \{32, 128, 512, 2048\}$ using the linear scaling rule. Plot the generalization gap versus batch size.
+\end{exercise}
+
+\begin{exercise}{Noise and Sharp Minima}{ch10-ex-noise-minima}
+For $f(\theta) = \theta^4 - 2\theta^2 + 1$ (which has two local minima), run SGD with noise $\epsilon \sim \mathcal{N}(0, \sigma^2)$ from $\theta_0 = 0$. How does noise level affect which minimum is found?
+\end{exercise}
+
+%------------------------------------------------------------------------------
+\section{Summary}
+\label{sec:ch10-summary}
+
+This chapter developed the theory and practice of stochastic optimization, the computational engine of modern machine learning:
+
+\begin{itemize}
+    \item \textbf{Stochastic gradients} are unbiased estimators of the true gradient, enabling optimization with $O(1)$ cost per update instead of $O(n)$
+
+    \item \textbf{Mini-batch gradient descent} provides a tunable trade-off between gradient variance and computational efficiency, with variance scaling as $\sigma^2/B$
+
+    \item \textbf{Variance reduction techniques} like SVRG and SAGA achieve linear convergence rates while maintaining low per-iteration cost, though they require additional memory or computation
+
+    \item \textbf{SGD convergence} is well-understood: $O(1/\sqrt{T})$ for convex functions, $O(1/T)$ for strongly convex, with constant learning rate yielding convergence to a neighborhood rather than a point
+
+    \item \textbf{Noise serves as implicit regularization}, biasing optimization toward flat minima that often generalize better---a key insight explaining why SGD often outperforms full-batch methods
+
+    \item \textbf{Learning rate decay} is theoretically motivated by the convergence bound's dependence on $\eta$; specific schedules and implementation are covered in Chapter~\ref{ch:advanced-optimizers}
+
+    \item \textbf{Batch size} affects both computational efficiency and generalization; the linear scaling rule connects batch size to learning rate, but very large batches require specialized techniques like LARS
+\end{itemize}
+
+The next chapter on \textbf{Gradient Descent} (Chapter~\ref{ch:gradient-descent}) builds upon this stochastic foundation, introducing momentum methods (classical momentum, Nesterov acceleration) that accelerate convergence. Chapter~\ref{ch:advanced-optimizers} then covers adaptive learning rate algorithms (AdaGrad, RMSprop, Adam) that address the challenges of ill-conditioned loss landscapes and per-parameter learning rate tuning.
+
+Learning rate scheduling, which controls how $\eta_t$ changes during training, is covered in detail in Chapter~\ref{ch:advanced-optimizers}.
+
+\section*{Interview Questions}
+\begin{interviewquestions}
+
+\textbf{Question 1: Why does SGD work despite using noisy gradients?}
+
+\textit{Expected follow-ups:}
+\begin{itemize}
+    \item What property of the stochastic gradient makes this work mathematically?
+    \item Does SGD converge to the exact optimum?
+    \item How does gradient noise actually help in some cases?
+\end{itemize}
+
+\textit{Red flags to avoid:}
+\begin{itemize}
+    \item Saying ``the noise averages out''---this is vague and doesn't explain the mechanism
+    \item Not mentioning unbiasedness as the key property
+    \item Claiming SGD always converges to the global minimum (it converges to a neighborhood with constant LR)
+\end{itemize}
+
+\textit{Strong answer key points:}
+\begin{itemize}
+    \item \textbf{Unbiasedness}: $\mathbb{E}[\nabla f_i(\theta)] = \nabla f(\theta)$---the expected gradient equals the true gradient
+    \item With decreasing learning rate satisfying Robbins-Monro conditions ($\sum \eta_t = \infty$, $\sum \eta_t^2 < \infty$), SGD converges to the optimum
+    \item With constant LR, SGD converges to a ball around the optimum of radius $O(\eta \sigma^2 / \mu)$
+    \item Noise is actually beneficial: helps escape sharp local minima and acts as implicit regularization, often leading to better generalization
+\end{itemize}
+
+\vspace{0.5em}
+\textbf{Question 2: How do you choose batch size? What are the tradeoffs?}
+
+\textit{Expected follow-ups:}
+\begin{itemize}
+    \item What is the linear scaling rule?
+    \item Why might very large batch sizes hurt generalization?
+    \item How does batch size interact with learning rate?
+\end{itemize}
+
+\textit{Red flags to avoid:}
+\begin{itemize}
+    \item Saying ``larger batch is always better because it reduces variance''
+    \item Not mentioning the generalization gap with large batches
+    \item Forgetting that batch size affects memory usage and GPU utilization
+\end{itemize}
+
+\textit{Strong answer key points:}
+\begin{itemize}
+    \item \textbf{Variance-computation tradeoff}: Batch size $B$ reduces gradient variance by factor $B$ but increases compute per step by factor $B$
+    \item \textbf{Linear scaling rule}: When increasing batch size by $k$, scale learning rate by $k$ to maintain similar dynamics
+    \item \textbf{Generalization gap}: Very large batches (>8K) often generalize worse because reduced noise weakens implicit regularization
+    \item \textbf{Practical choice}: Start with 32-256, scale with hardware. Use gradient accumulation if desired batch doesn't fit in memory
+    \item Beyond critical batch size, diminishing returns---more compute doesn't improve convergence
+\end{itemize}
+
+\vspace{0.5em}
+\textbf{Question 3: Explain the bias-variance tradeoff in mini-batch gradient estimation.}
+
+\textit{Expected follow-ups:}
+\begin{itemize}
+    \item How does batch size affect the variance?
+    \item Is the mini-batch gradient biased or unbiased?
+    \item How does this relate to the convergence rate of SGD?
+\end{itemize}
+
+\textit{Red flags to avoid:}
+\begin{itemize}
+    \item Confusing this with the bias-variance tradeoff in model complexity
+    \item Saying mini-batch gradients are biased (they are unbiased estimators)
+    \item Not quantifying the variance reduction: $\text{Var} = \sigma^2/B$
+\end{itemize}
+
+\textit{Strong answer key points:}
+\begin{itemize}
+    \item Mini-batch gradient is an \textbf{unbiased} estimator of the full gradient: $\mathbb{E}[g_B] = \nabla f(\theta)$
+    \item Variance scales inversely with batch size: $\text{Var}[g_B] = \sigma^2/B$
+    \item \textbf{No bias-variance tradeoff} in estimation---larger batch always reduces variance without introducing bias
+    \item The tradeoff is \textbf{variance vs. computation}: doubling batch size halves variance but doubles compute
+    \item Convergence rate depends on variance: $O(\sigma^2/(BT))$ for strongly convex functions
+\end{itemize}
+
+\vspace{0.5em}
+\textbf{Question 4: What is variance reduction? Name techniques that achieve it.}
+
+\textit{Expected follow-ups:}
+\begin{itemize}
+    \item How does SVRG work?
+    \item Why aren't variance reduction methods common in deep learning?
+    \item What is a control variate?
+\end{itemize}
+
+\textit{Red flags to avoid:}
+\begin{itemize}
+    \item Only mentioning ``use larger batches'' as variance reduction
+    \item Not knowing any specific algorithms (SVRG, SAGA, SAG)
+    \item Confusing variance reduction with regularization
+\end{itemize}
+
+\textit{Strong answer key points:}
+\begin{itemize}
+    \item \textbf{SVRG}: Periodically compute full gradient $\tilde{\mu}$, use as control variate: $g = \nabla f_i(\theta) - \nabla f_i(\tilde{\theta}) + \tilde{\mu}$
+    \item \textbf{SAGA}: Maintain table of per-sample gradients, update one per iteration
+    \item Both achieve linear convergence (like full GD) with $O(n)$ gradient evaluations per epoch
+    \item \textbf{Why rare in deep learning}: (1) Memory overhead for gradient tables, (2) Deep learning benefits from noise as implicit regularization, (3) Simple SGD with momentum works well empirically
+    \item Control variates work by subtracting a correlated random variable with known mean to reduce variance
+\end{itemize}
+
+\vspace{0.5em}
+\textbf{Question 5: How does SGD noise help generalization? Explain the flat minima hypothesis.}
+
+\textit{Expected follow-ups:}
+\begin{itemize}
+    \item What is a sharp vs. flat minimum?
+    \item How does batch size affect which minima SGD finds?
+    \item Is there theoretical support for the flat minima hypothesis?
+\end{itemize}
+
+\textit{Red flags to avoid:}
+\begin{itemize}
+    \item Presenting flat minima as settled science (it's still debated)
+    \item Not knowing that small batch sizes empirically generalize better
+    \item Confusing sharpness with Hessian eigenvalues without nuance
+\end{itemize}
+
+\textit{Strong answer key points:}
+\begin{itemize}
+    \item \textbf{Sharp minima}: High curvature (large Hessian eigenvalues), small perturbations cause large loss increases
+    \item \textbf{Flat minima}: Low curvature, robust to perturbations---more likely to generalize because train/test distributions differ slightly
+    \item \textbf{SGD escapes sharp minima}: Gradient noise makes it hard to stay in narrow valleys; converges preferentially to flatter regions
+    \item \textbf{Batch size effect}: Smaller batches = more noise = stronger bias toward flat minima = better generalization (empirically observed)
+    \item \textbf{Caveat}: Sharpness can be changed by reparameterization without affecting generalization, so the connection is nuanced
+\end{itemize}
+
+\end{interviewquestions}
+
+%------------------------------------------------------------------------------
+%  CHAPTER SUMMARY
+%------------------------------------------------------------------------------
+\begin{chaptersummary}
+\textbf{What We Covered:}
+\begin{itemize}
+    \item Stochastic gradients are unbiased estimators enabling $O(1)$ cost per update instead of $O(n)$
+    \item Mini-batch SGD balances variance ($\sigma^2/B$) against computational cost
+    \item Variance reduction techniques (SVRG, SAGA) achieve linear convergence while maintaining low per-iteration cost
+    \item SGD noise serves as implicit regularization, biasing optimization toward flatter minima that generalize better
+\end{itemize}
+
+\textbf{Key Formulas:}
+\begin{align*}
+    &\text{SGD Update: } \vect{\theta}_{t+1} = \vect{\theta}_t - \eta \grad_\theta \ell(\vect{x}_i, y_i; \vect{\theta}_t) \\
+    &\text{Mini-batch Variance: } \Var[\vect{g}_\mathcal{B}] = \frac{\sigma^2}{B} \\
+    &\text{Convergence (strongly convex): } \E[f(\vect{\theta}_T)] - f(\vect{\theta}^*) = O(1/T)
+\end{align*}
+
+\textbf{When to Use This:}
+\begin{itemize}
+    \item Large-scale training where full-batch gradients are computationally infeasible
+    \item All modern deep learning---SGD and its variants power neural network training
+    \item When implicit regularization from noise benefits generalization
+    \item Online learning scenarios with streaming data
+\end{itemize}
+
+\textbf{Next Up:} Gradient descent variants including momentum methods and learning rate schedules that address convergence challenges in ill-conditioned loss landscapes.
+\end{chaptersummary}
+
+\end{document}

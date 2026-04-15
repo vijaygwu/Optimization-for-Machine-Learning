@@ -1,0 +1,530 @@
+\documentclass[../main.tex]{subfiles}
+
+\begin{document}
+
+\chapter{Exercises and Solutions}\label{app:exercises}
+
+This appendix provides exercises for each chapter, ranging from computational practice to theoretical proofs. Selected solutions are provided at the end of each section.
+
+%% ============================================================
+\section{Chapter 1: Convex Optimization}\label{sec:ex-convex}
+
+\subsection{Exercises}
+
+\begin{simpleexercise}[Convexity Proofs]
+Prove that the following functions are convex:
+\begin{enumerate}[(a)]
+    \item $f(x) = e^{ax}$ for any $a \in \mathbb{R}$
+    \item $f(x) = x \log x$ for $x > 0$
+    \item $f(x) = \|Ax - b\|_2^2$ for any matrix $A$ and vector $b$
+    \item $f(X) = -\log \det(X)$ for positive definite $X$
+\end{enumerate}
+\end{simpleexercise}
+
+\begin{simpleexercise}[Convex Sets]
+Determine whether the following sets are convex. Prove your answer.
+\begin{enumerate}[(a)]
+    \item $\{x \in \mathbb{R}^n : \|x\|_2 \leq 1\}$ (unit ball)
+    \item $\{x \in \mathbb{R}^n : \|x\|_0 \leq k\}$ (at most $k$ nonzero entries)
+    \item $\{X \in \mathbb{R}^{n \times n} : X \succeq 0\}$ (positive semidefinite cone)
+    \item $\{x \in \mathbb{R}^n : Ax = b, x \geq 0\}$
+\end{enumerate}
+\end{simpleexercise}
+
+\begin{simpleexercise}[Operations Preserving Convexity]
+Let $f$ and $g$ be convex functions. Prove:
+\begin{enumerate}[(a)]
+    \item $\alpha f + \beta g$ is convex for $\alpha, \beta \geq 0$
+    \item $\max\{f, g\}$ is convex
+    \item $f(Ax + b)$ is convex for any matrix $A$ and vector $b$
+    \item Is $\min\{f, g\}$ convex? Provide a proof or counterexample.
+\end{enumerate}
+\end{simpleexercise}
+
+\begin{simpleexercise}[Strong Convexity]
+A function $f$ is $\mu$-strongly convex if $f(x) - \frac{\mu}{2}\|x\|^2$ is convex.
+\begin{enumerate}[(a)]
+    \item Prove that $f(x) = \frac{1}{2}x^\top Q x$ is strongly convex with parameter $\mu = \lambda_{\min}(Q)$
+    \item Show that strong convexity implies a unique minimizer
+    \item Prove that if $f$ is $\mu$-strongly convex and $g$ is convex, then $f + g$ is $\mu$-strongly convex
+\end{enumerate}
+\end{simpleexercise}
+
+\begin{simpleexercise}[Lagrangian Duality]
+Consider the optimization problem:
+\[
+\min_{x \in \mathbb{R}^n} \frac{1}{2}\|x\|^2 \quad \text{subject to } Ax = b
+\]
+\begin{enumerate}[(a)]
+    \item Write the Lagrangian and derive the dual problem
+    \item Solve the dual problem explicitly
+    \item Recover the primal solution from the dual solution
+    \item Verify strong duality holds
+\end{enumerate}
+\end{simpleexercise}
+
+\begin{simpleexercise}[KKT Conditions]
+For the problem $\min_{x} f(x)$ subject to $g_i(x) \leq 0$ and $h_j(x) = 0$:
+\begin{enumerate}[(a)]
+    \item State the KKT conditions
+    \item Apply KKT to solve: $\min x_1^2 + x_2^2$ subject to $x_1 + x_2 = 1$
+    \item Apply KKT to solve: $\min x_1 + x_2$ subject to $x_1^2 + x_2^2 \leq 1$
+\end{enumerate}
+\end{simpleexercise}
+
+\subsection{Selected Solutions}
+
+\begin{solution}[Exercise 1.1(c)]
+We need to show $f(x) = \|Ax - b\|_2^2$ is convex.
+
+\textbf{Method 1 (Second derivative):}
+\[
+f(x) = (Ax - b)^\top(Ax - b) = x^\top A^\top A x - 2b^\top Ax + b^\top b
+\]
+The Hessian is $\nabla^2 f(x) = 2A^\top A$, which is positive semidefinite since for any $v$:
+\[
+v^\top (A^\top A) v = \|Av\|_2^2 \geq 0
+\]
+
+\textbf{Method 2 (Composition):}
+The squared norm $\|\cdot\|_2^2$ is convex (prove via definition). Affine functions $Ax - b$ preserve convexity under composition with convex increasing functions.
+\end{solution}
+
+\begin{solution}[Exercise 1.5]
+\textbf{(a)} The Lagrangian is:
+\[
+L(x, \nu) = \frac{1}{2}\|x\|^2 + \nu^\top(Ax - b)
+\]
+
+\textbf{(b)} Setting $\nabla_x L = x + A^\top\nu = 0$ gives $x = -A^\top\nu$. Substituting into the Lagrangian:
+\[
+g(\nu) = \frac{1}{2}\|A^\top\nu\|^2 - \nu^\top A A^\top\nu - \nu^\top b = -\frac{1}{2}\nu^\top AA^\top\nu - \nu^\top b
+\]
+The dual problem is $\max_\nu g(\nu) = \max_\nu -\frac{1}{2}\nu^\top AA^\top\nu - \nu^\top b$.
+
+Setting $\nabla_\nu g = 0$: $-AA^\top\nu - b = 0$, so $\nu^* = -(AA^\top)^{-1}b$.
+
+\textbf{(c)} The primal solution: $x^* = -A^\top\nu^* = A^\top(AA^\top)^{-1}b$.
+
+\textbf{(d)} This is the minimum norm solution to $Ax = b$. Strong duality holds because the problem is convex with linear constraints (Slater's condition is satisfied).
+\end{solution}
+
+%% ============================================================
+\section{Chapter 2: Stochastic Optimization}\label{sec:ex-stochastic}
+
+\subsection{Exercises}
+
+\begin{simpleexercise}[SGD Variance]
+Consider $f(x) = \frac{1}{n}\sum_{i=1}^n f_i(x)$ where $f_i(x) = \frac{1}{2}(a_i^\top x - b_i)^2$.
+\begin{enumerate}[(a)]
+    \item Compute $\nabla f_i(x)$ and $\nabla f(x)$
+    \item Derive an expression for $\mathbb{E}[\|\nabla f_i(x) - \nabla f(x)\|^2]$
+    \item Show how this variance depends on the data heterogeneity
+    \item Under what conditions is the variance zero?
+\end{enumerate}
+\end{simpleexercise}
+
+\begin{simpleexercise}[Mini-batch SGD]
+Let $g_B = \frac{1}{|B|}\sum_{i \in B} \nabla f_i(x)$ be a mini-batch gradient.
+\begin{enumerate}[(a)]
+    \item Prove $\mathbb{E}[g_B] = \nabla f(x)$ (unbiasedness)
+    \item Show that $\text{Var}(g_B) = \frac{\sigma^2}{|B|}$ where $\sigma^2$ is the single-sample variance
+    \item Derive the optimal batch size given a computational budget
+    \item Compare wall-clock time for batch sizes $B = 1, 32, 256$ assuming linear parallelization
+\end{enumerate}
+\end{simpleexercise}
+
+\begin{simpleexercise}[Importance Sampling]
+Consider weighted sampling where $p_i \propto \|\nabla f_i(x)\|$.
+\begin{enumerate}[(a)]
+    \item Derive the importance-weighted gradient estimator
+    \item Prove it is unbiased
+    \item Show it has lower variance than uniform sampling
+    \item Discuss practical challenges of this approach
+\end{enumerate}
+\end{simpleexercise}
+
+\begin{simpleexercise}[Noise and Generalization]
+\begin{enumerate}[(a)]
+    \item Explain why SGD noise can help escape saddle points
+    \item How does batch size affect the implicit regularization of SGD?
+    \item Design an experiment to test whether larger batch sizes lead to sharper minima
+\end{enumerate}
+\end{simpleexercise}
+
+\subsection{Selected Solutions}
+
+\begin{solution}[Exercise 2.2(a,b)]
+\textbf{(a)} By linearity of expectation:
+\[
+\mathbb{E}[g_B] = \mathbb{E}\Big[\frac{1}{|B|}\sum_{i \in B} \nabla f_i(x)\Big] = \frac{1}{|B|}\sum_{i \in B} \mathbb{E}[\nabla f_i(x)] = \nabla f(x)
+\]
+since each $i$ is drawn uniformly and $\mathbb{E}[\nabla f_i(x)] = \nabla f(x)$.
+
+\textbf{(b)} For independent samples:
+\begin{align}
+\text{Var}(g_B) &= \text{Var}\Big(\frac{1}{|B|}\sum_{i \in B} \nabla f_i(x)\Big) \\
+&= \frac{1}{|B|^2} \sum_{i \in B} \text{Var}(\nabla f_i(x)) \\
+&= \frac{1}{|B|^2} \cdot |B| \cdot \sigma^2 = \frac{\sigma^2}{|B|}
+\end{align}
+This shows variance decreases linearly with batch size.
+\end{solution}
+
+%% ============================================================
+\section{Chapter 3: Gradient Descent}\label{sec:ex-gradient-descent}
+
+\subsection{Exercises}
+
+\begin{simpleexercise}[Learning Rate Analysis]
+For $f(x) = \frac{1}{2}x^\top Qx$ with $Q = \text{diag}(\lambda_1, \ldots, \lambda_n)$:
+\begin{enumerate}[(a)]
+    \item Write the gradient descent update for each coordinate
+    \item Show the update is $x_i^{(k+1)} = (1 - \eta\lambda_i)x_i^{(k)}$
+    \item Find the range of $\eta$ for convergence
+    \item Find the optimal $\eta$ minimizing worst-case convergence
+    \item How does the condition number $\kappa = \lambda_{\max}/\lambda_{\min}$ affect convergence?
+\end{enumerate}
+\end{simpleexercise}
+
+\begin{simpleexercise}[Momentum]
+For heavy ball momentum: $v_{t+1} = \beta v_t + \nabla f(x_t)$, $x_{t+1} = x_t - \eta v_t$
+\begin{enumerate}[(a)]
+    \item Rewrite as a second-order recurrence in $x_t$
+    \item For $f(x) = \frac{1}{2}\lambda x^2$, find the characteristic equation
+    \item Determine optimal $\eta$ and $\beta$ for fastest convergence
+    \item Compare the rate to vanilla gradient descent
+\end{enumerate}
+\end{simpleexercise}
+
+\begin{simpleexercise}[Nesterov Momentum]
+Implement Nesterov accelerated gradient and compare to heavy ball momentum on:
+\begin{enumerate}[(a)]
+    \item A quadratic: $f(x) = \frac{1}{2}x^\top Q x$ with $\kappa = 100$
+    \item Logistic regression on a synthetic dataset
+    \item A neural network on MNIST (first 1000 samples)
+\end{enumerate}
+Plot loss curves and compare convergence behavior.
+\end{simpleexercise}
+
+\begin{simpleexercise}[Learning Rate Schedules]
+Implement and compare:
+\begin{enumerate}[(a)]
+    \item Constant learning rate
+    \item Step decay (halve every $k$ epochs)
+    \item Exponential decay: $\eta_t = \eta_0 \cdot \gamma^t$
+    \item Cosine annealing: $\eta_t = \eta_{\min} + \frac{1}{2}(\eta_0 - \eta_{\min})(1 + \cos(\pi t/T))$
+    \item Warmup + decay
+\end{enumerate}
+Test on a 2-layer MLP trained on CIFAR-10.
+\end{simpleexercise}
+
+\subsection{Selected Solutions}
+
+\begin{solution}[Exercise 3.1]
+\textbf{(a,b)} The gradient is $\nabla f(x) = Qx$, so $(\nabla f(x))_i = \lambda_i x_i$. The update:
+\[
+x_i^{(k+1)} = x_i^{(k)} - \eta \lambda_i x_i^{(k)} = (1 - \eta\lambda_i)x_i^{(k)}
+\]
+
+\textbf{(c)} For convergence, we need $|1 - \eta\lambda_i| < 1$ for all $i$. This requires:
+\[
+-1 < 1 - \eta\lambda_i < 1 \implies 0 < \eta < \frac{2}{\lambda_i}
+\]
+For all eigenvalues: $0 < \eta < 2/\lambda_{\max}$.
+
+\textbf{(d)} The convergence rate is $\max_i |1 - \eta\lambda_i|$. To minimize the worst case:
+\[
+\eta^* = \frac{2}{\lambda_{\max} + \lambda_{\min}}
+\]
+giving rate $\rho = \frac{\kappa - 1}{\kappa + 1}$.
+
+\textbf{(e)} For large $\kappa$: $\rho \approx 1 - 2/\kappa$. The number of iterations to reduce error by factor $\epsilon$ is $O(\kappa \log(1/\epsilon))$.
+\end{solution}
+
+%% ============================================================
+\section{Chapter 4: Advanced Optimizers}\label{sec:ex-advanced}
+
+\subsection{Exercises}
+
+\begin{simpleexercise}[Implement Adam]
+Write a complete implementation of Adam from scratch.
+\begin{enumerate}[(a)]
+    \item Implement the basic Adam algorithm
+    \item Add weight decay (AdamW variant)
+    \item Add AMSGrad modification
+    \item Test on logistic regression and compare to SGD with momentum
+\end{enumerate}
+\end{simpleexercise}
+
+\begin{simpleexercise}[Optimizer Comparison]
+Compare SGD, SGD+Momentum, AdaGrad, RMSprop, and Adam on:
+\begin{enumerate}[(a)]
+    \item Rosenbrock function (2D)
+    \item A sparse linear regression problem
+    \item ResNet-18 on CIFAR-10 (10 epochs)
+\end{enumerate}
+Create plots showing loss curves, gradient norm evolution, and final accuracy.
+\end{simpleexercise}
+
+\begin{simpleexercise}[AdaGrad Analysis]
+For AdaGrad: $x_{t+1} = x_t - \frac{\eta}{\sqrt{G_t + \epsilon}} \odot g_t$ where $G_t = \sum_{s=1}^t g_s \odot g_s$:
+\begin{enumerate}[(a)]
+    \item Show that effective learning rates decrease over time
+    \item Prove this is beneficial for sparse problems
+    \item What is the main limitation for non-convex optimization?
+    \item How does RMSprop address this limitation?
+\end{enumerate}
+\end{simpleexercise}
+
+\begin{simpleexercise}[Learning Rate Warmup]
+\begin{enumerate}[(a)]
+    \item Explain why warmup is necessary for Adam with large learning rates
+    \item Implement linear warmup for the first $k$ steps
+    \item Compare training with and without warmup on a transformer model
+\end{enumerate}
+\end{simpleexercise}
+
+\subsection{Selected Solutions}
+
+\begin{solution}[Exercise 4.1(a)]
+\begin{verbatim}
+def adam(params, grads, m, v, t, lr=0.001, beta1=0.9, beta2=0.999, eps=1e-8):
+    """
+    Adam optimizer update.
+
+    Args:
+        params: list of parameters
+        grads: list of gradients
+        m: first moment estimates
+        v: second moment estimates
+        t: timestep (starting from 1)
+        lr: learning rate
+        beta1, beta2: decay rates
+        eps: numerical stability
+
+    Returns:
+        updated params, m, v
+    """
+    for i in range(len(params)):
+        # Update biased first moment estimate
+        m[i] = beta1 * m[i] + (1 - beta1) * grads[i]
+
+        # Update biased second moment estimate
+        v[i] = beta2 * v[i] + (1 - beta2) * (grads[i] ** 2)
+
+        # Bias correction
+        m_hat = m[i] / (1 - beta1 ** t)
+        v_hat = v[i] / (1 - beta2 ** t)
+
+        # Update parameters
+        params[i] = params[i] - lr * m_hat / (np.sqrt(v_hat) + eps)
+
+    return params, m, v
+\end{verbatim}
+\end{solution}
+
+%% ============================================================
+\section{Chapter 5: Generalization and Regularization}\label{sec:ex-regularization}
+
+\subsection{Exercises}
+
+\begin{simpleexercise}[L1 vs L2 Regularization]
+Consider $\min_w \|Xw - y\|^2 + \lambda R(w)$ with $R(w) = \|w\|_1$ or $R(w) = \|w\|_2^2$.
+\begin{enumerate}[(a)]
+    \item Derive the gradient (or subgradient) for each case
+    \item Solve analytically for $X = I$ (identity matrix)
+    \item Explain geometrically why L1 promotes sparsity
+    \item Implement and compare on a sparse signal recovery problem
+\end{enumerate}
+\end{simpleexercise}
+
+\begin{simpleexercise}[Elastic Net]
+Elastic net combines L1 and L2: $R(w) = \alpha\|w\|_1 + (1-\alpha)\|w\|_2^2$.
+\begin{enumerate}[(a)]
+    \item Derive the proximal operator for elastic net
+    \item When is elastic net preferred over pure L1 or L2?
+    \item Implement coordinate descent for elastic net regression
+\end{enumerate}
+\end{simpleexercise}
+
+\begin{simpleexercise}[Dropout]
+\begin{enumerate}[(a)]
+    \item Derive the expected output of a dropout layer with rate $p$
+    \item Explain why we scale by $1/(1-p)$ during training (inverted dropout)
+    \item Show that dropout is equivalent to a form of weight regularization
+    \item Compare dropout to L2 regularization on a 3-layer MLP
+\end{enumerate}
+\end{simpleexercise}
+
+\begin{simpleexercise}[Early Stopping]
+\begin{enumerate}[(a)]
+    \item Prove that early stopping is equivalent to L2 regularization for linear regression with gradient descent
+    \item Implement early stopping with a patience parameter
+    \item How do you choose the validation set size?
+    \item Design an experiment comparing early stopping to explicit regularization
+\end{enumerate}
+\end{simpleexercise}
+
+\begin{simpleexercise}[Weight Decay vs L2]
+\begin{enumerate}[(a)]
+    \item For SGD, show that weight decay and L2 regularization are equivalent
+    \item For Adam, show they are NOT equivalent
+    \item Explain why AdamW (decoupled weight decay) often works better than Adam + L2
+\end{enumerate}
+\end{simpleexercise}
+
+\subsection{Selected Solutions}
+
+\begin{solution}[Exercise 5.1(b,c)]
+\textbf{(b)} For $X = I$, the problem becomes:
+\[
+\min_w \frac{1}{2}\|w - y\|^2 + \lambda R(w)
+\]
+This has a closed-form solution:
+\begin{itemize}
+    \item \textbf{L2:} $w^* = \frac{y}{1 + 2\lambda}$ (uniform shrinkage)
+    \item \textbf{L1:} $w_i^* = \text{sign}(y_i)(|y_i| - \lambda)_+$ (soft thresholding)
+\end{itemize}
+
+\textbf{(c)} The L1 ball $\{w : \|w\|_1 \leq t\}$ has corners on the axes. The level sets of the quadratic loss are ellipsoids. For generic data, these intersect at a corner, giving a sparse solution. The L2 ball is smooth, so intersections typically occur away from axes.
+\end{solution}
+
+%% ============================================================
+\section{Chapter 6: Loss Functions}\label{sec:ex-loss}
+
+\subsection{Exercises}
+
+\begin{simpleexercise}[Cross-Entropy Loss]
+\begin{enumerate}[(a)]
+    \item Derive cross-entropy loss from maximum likelihood estimation
+    \item Show that minimizing cross-entropy is equivalent to minimizing KL divergence
+    \item Compute the gradient of cross-entropy with respect to logits
+    \item Why do we use log-softmax for numerical stability?
+\end{enumerate}
+\end{simpleexercise}
+
+\begin{simpleexercise}[Loss Function Design]
+Design appropriate loss functions for:
+\begin{enumerate}[(a)]
+    \item Predicting house prices (regression with outliers)
+    \item Multi-label classification (each sample can have multiple labels)
+    \item Ordinal regression (predicting ratings 1-5)
+    \item Learning to rank (relative ordering matters)
+\end{enumerate}
+\end{simpleexercise}
+
+\begin{simpleexercise}[Focal Loss]
+Focal loss modifies cross-entropy: $FL(p_t) = -(1 - p_t)^\gamma \log(p_t)$.
+\begin{enumerate}[(a)]
+    \item Show that $\gamma = 0$ recovers cross-entropy
+    \item Plot focal loss for $\gamma = 0, 1, 2, 5$
+    \item Explain why focal loss helps with class imbalance
+    \item Implement and test on an imbalanced dataset
+\end{enumerate}
+\end{simpleexercise}
+
+\begin{simpleexercise}[Huber Loss]
+The Huber loss is:
+\[
+L_\delta(y, \hat{y}) = \begin{cases}
+\frac{1}{2}(y - \hat{y})^2 & |y - \hat{y}| \leq \delta \\
+\delta(|y - \hat{y}| - \frac{\delta}{2}) & \text{otherwise}
+\end{cases}
+\]
+\begin{enumerate}[(a)]
+    \item Verify that Huber loss is continuous and differentiable
+    \item Show it behaves like MSE near zero and MAE for large errors
+    \item Compute the gradient
+    \item Compare robustness to outliers vs MSE
+\end{enumerate}
+\end{simpleexercise}
+
+\subsection{Selected Solutions}
+
+\begin{solution}[Exercise 6.1(a,b)]
+\textbf{(a)} For classification with true label $y$ and predicted probabilities $p$:
+\[
+\mathcal{L} = -\log P(y | x) = -\log p_y = -\sum_{k} y_k \log p_k
+\]
+where $y$ is one-hot encoded. This is cross-entropy.
+
+\textbf{(b)} KL divergence from true distribution $q$ to predicted $p$:
+\[
+D_{KL}(q \| p) = \sum_k q_k \log \frac{q_k}{p_k} = -H(q) - \sum_k q_k \log p_k
+\]
+Since $H(q)$ (entropy of true distribution) is constant with respect to $p$, minimizing KL divergence is equivalent to minimizing cross-entropy.
+\end{solution}
+
+%% ============================================================
+\section{Chapter 7: Convergence Analysis}\label{sec:ex-convergence}
+
+\subsection{Exercises}
+
+\begin{simpleexercise}[Convergence Rate Analysis]
+For $f(x) = \frac{1}{2}x^\top Qx$ with eigenvalues $\mu \leq \lambda_i \leq L$:
+\begin{enumerate}[(a)]
+    \item Prove the convergence rate is $\rho = \frac{L - \mu}{L + \mu}$ for optimal step size
+    \item How many iterations are needed to reduce error by factor $10^{-6}$?
+    \item Compare to accelerated gradient descent rate $\rho_{acc} = \frac{\sqrt{L} - \sqrt{\mu}}{\sqrt{L} + \sqrt{\mu}}$
+\end{enumerate}
+\end{simpleexercise}
+
+\begin{simpleexercise}[Condition Number]
+\begin{enumerate}[(a)]
+    \item Compute the condition number of $Q = \begin{pmatrix} 100 & 0 \\ 0 & 1 \end{pmatrix}$
+    \item Plot gradient descent trajectories for $f(x) = \frac{1}{2}x^\top Q x$ with various condition numbers
+    \item How does preconditioning improve the condition number?
+    \item Design a preconditioner for sparse linear systems
+\end{enumerate}
+\end{simpleexercise}
+
+\begin{simpleexercise}[Non-Convex Analysis]
+For non-convex $f$ with $L$-Lipschitz gradient:
+\begin{enumerate}[(a)]
+    \item Prove that GD with $\eta = 1/L$ satisfies: $\min_{t \leq T} \|\nabla f(x_t)\|^2 \leq \frac{2(f(x_0) - f^*)}{T/L}$
+    \item What does this say about convergence to stationary points?
+    \item How do saddle points affect this analysis?
+    \item Discuss the role of noise in escaping saddle points
+\end{enumerate}
+\end{simpleexercise}
+
+\begin{simpleexercise}[Variance Reduction]
+Implement and compare:
+\begin{enumerate}[(a)]
+    \item Vanilla SGD
+    \item SVRG (Stochastic Variance Reduced Gradient)
+    \item SAGA
+\end{enumerate}
+Test on logistic regression with $n = 10000$ samples. Plot variance of gradient estimates over time.
+\end{simpleexercise}
+
+\begin{simpleexercise}[Practical Convergence Diagnosis]
+For a neural network training run:
+\begin{enumerate}[(a)]
+    \item Design metrics to monitor convergence (beyond just loss)
+    \item Implement gradient norm tracking
+    \item Detect signs of: divergence, saddle points, local minima
+    \item Create visualizations for diagnosing optimization issues
+\end{enumerate}
+\end{simpleexercise}
+
+\subsection{Selected Solutions}
+
+\begin{solution}[Exercise 7.1(a,b)]
+\textbf{(a)} With optimal step size $\eta^* = \frac{2}{L + \mu}$:
+\[
+x^{(k+1)} = x^{(k)} - \eta^* Qx^{(k)} = (I - \eta^* Q)x^{(k)}
+\]
+The convergence rate is:
+\[
+\rho = \|I - \eta^* Q\| = \max_i |1 - \eta^* \lambda_i| = \frac{L - \mu}{L + \mu} = \frac{\kappa - 1}{\kappa + 1}
+\]
+
+\textbf{(b)} For error reduction of $10^{-6}$:
+\[
+\rho^k \leq 10^{-6} \implies k \geq \frac{6 \ln 10}{\ln(1/\rho)} \approx \frac{6 \ln 10}{\frac{2}{\kappa}} = 3\kappa \ln 10 \approx 6.9\kappa
+\]
+For $\kappa = 100$, we need approximately $k \approx 690$ iterations.
+\end{solution}
+
+\end{document}

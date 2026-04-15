@@ -1,0 +1,1751 @@
+%==============================================================================
+%  CAPSTONE PROJECT: Optimizer Showdown
+%  Part II: Optimization Theory
+%==============================================================================
+\documentclass[../../main.tex]{subfiles}
+
+\begin{document}
+
+\chapter{Capstone Project: Optimizer Showdown}
+\label{ch:capstone-optimizers}
+
+\begin{keytakeaways}
+In this project, you will:
+\begin{itemize}
+    \item Implement SGD, Momentum, RMSprop, and Adam from scratch
+    \item Train a neural network on MNIST using each optimizer
+    \item Compare convergence speed, stability, and final accuracy
+    \item Understand when to use each optimizer in practice
+\end{itemize}
+Estimated time: 3--4 hours
+\end{keytakeaways}
+
+\begin{realworld}
+\textbf{Why This Matters:} Understanding optimizers deeply---not just using them as black boxes---separates good practitioners from great ones. When training fails, knowing \textit{why} Adam oscillates or SGD stalls lets you diagnose and fix problems instead of blindly trying hyperparameters.
+
+\textbf{What You'll Build:} A complete optimizer benchmarking framework that you can reuse for any future project. The patterns here scale from MNIST to million-parameter models.
+\end{realworld}
+
+%------------------------------------------------------------------------------
+\section{The Challenge}
+\label{sec:capstone-challenge}
+
+Your mission: train a simple multi-layer perceptron (MLP) on the MNIST handwritten digit dataset using four different optimizers, and systematically compare their performance.
+
+\subsection{The Network Architecture}
+
+We will use a straightforward three-layer MLP:
+\begin{itemize}
+    \item \textbf{Input layer}: 784 neurons (28$\times$28 flattened images)
+    \item \textbf{Hidden layer 1}: 256 neurons with ReLU activation
+    \item \textbf{Hidden layer 2}: 128 neurons with ReLU activation
+    \item \textbf{Output layer}: 10 neurons with softmax activation
+\end{itemize}
+
+This architecture has approximately 235,000 trainable parameters---large enough to see meaningful optimizer differences, small enough to train quickly on a laptop.
+
+\subsection{The Competition Criteria}
+
+We will compare the four optimizers on:
+
+\begin{enumerate}
+    \item \textbf{Convergence speed}: How many epochs to reach 95\% validation accuracy?
+    \item \textbf{Final accuracy}: What is the best validation accuracy achieved during training?
+    \item \textbf{Training stability}: How smooth is the loss curve? Are there oscillations?
+    \item \textbf{Learning rate sensitivity}: How does performance change with different learning rates?
+\end{enumerate}
+
+\begin{important}
+\textbf{Proper Evaluation Protocol}
+
+We use a three-way data split to ensure unbiased evaluation:
+\begin{itemize}
+    \item \textbf{Training set (80\%)}: Used to update model parameters
+    \item \textbf{Validation set (10\%)}: Used to compare optimizers during training and for early stopping decisions
+    \item \textbf{Test set (10\%)}: Evaluated only once at the very end for final reporting
+\end{itemize}
+
+Using the test set during training would leak information into model selection, giving overly optimistic estimates of generalization performance. This is a common mistake---even in published papers!
+\end{important}
+
+\begin{keyconcept}
+Before starting to code, write down your predictions:
+\begin{itemize}
+    \item Which optimizer do you expect to converge fastest?
+    \item Which will achieve the highest final accuracy?
+    \item Which will be most sensitive to learning rate choice?
+\end{itemize}
+Comparing your predictions to actual results deepens understanding.
+\end{keyconcept}
+
+%------------------------------------------------------------------------------
+\section{Quick Reference: Key Formulas}
+\label{sec:capstone-formulas}
+
+Before implementing, here is a quick refresher of each optimizer's update rule. For detailed explanations, refer to Chapter~\ref{ch:gradient-descent} (momentum) and Chapter~\ref{ch:advanced-optimizers} (Adam, schedules).
+
+\begin{table}[htbp]
+\centering
+\caption{Optimizer formulas used in this project}
+\label{tab:optimizer-formulas}
+\renewcommand{\arraystretch}{1.4}
+\small
+\begin{tabular}{@{}lp{10cm}@{}}
+\toprule
+\textbf{Method} & \textbf{Update Rule} \\
+\midrule
+SGD & $\vect{\theta}_{t+1} = \vect{\theta}_t - \eta \nabla L(\vect{\theta}_t)$ \\[8pt]
+Momentum & $\vect{v}_{t+1} = \beta \vect{v}_t + \nabla L$; \quad $\vect{\theta}_{t+1} = \vect{\theta}_t - \eta \vect{v}_{t+1}$ \\[8pt]
+RMSprop & $\vect{s}_{t+1} = \rho \vect{s}_t + (1-\rho)g_t^2$; \quad $\displaystyle\vect{\theta}_{t+1} = \vect{\theta}_t - \frac{\eta}{\sqrt{\vect{s}_{t+1}+\epsilon}} \odot g_t$ \\[12pt]
+Adam & \begin{tabular}[t]{@{}l@{}}
+$\vect{m}_t = \beta_1 \vect{m}_{t-1} + (1-\beta_1)g_t$ \\[4pt]
+$\vect{v}_t = \beta_2 \vect{v}_{t-1} + (1-\beta_2)g_t^2$ \\[4pt]
+$\displaystyle\vect{\theta}_{t+1} = \vect{\theta}_t - \eta \frac{\hat{\vect{m}}_t}{\sqrt{\hat{\vect{v}}_t}+\epsilon}$
+\end{tabular} \\[6pt]
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\caption{Typical hyperparameter values}
+\label{tab:optimizer-hyperparams}
+\begin{tabular}{@{}llll@{}}
+\toprule
+\textbf{Optimizer} & \textbf{Learning Rate} & \textbf{Momentum/Decay} & \textbf{Other} \\
+\midrule
+SGD & 0.1 & --- & --- \\
+Momentum & 0.01 & $\beta = 0.9$ & --- \\
+RMSprop & 0.001 & $\rho = 0.99$ & $\epsilon = 10^{-8}$ \\
+Adam & 0.001 & $\beta_1 = 0.9$, $\beta_2 = 0.999$ & $\epsilon = 10^{-8}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent\textbf{Key points:} Adam includes bias correction via $\hat{\vect{m}}_t = \vect{m}_t/(1-\beta_1^t)$ and $\hat{\vect{v}}_t = \vect{v}_t/(1-\beta_2^t)$. RMSprop and Adam adapt per-parameter learning rates; momentum accelerates convergence in consistent gradient directions.
+
+%------------------------------------------------------------------------------
+\section{Step 1: Create the Neural Network}
+\label{sec:capstone-network}
+
+We'll implement a simple MLP from scratch using NumPy. This gives full control and transparency.
+
+\begin{pythoncode}
+import numpy as np
+
+class MLP:
+    """
+    Multi-Layer Perceptron for MNIST classification.
+    Architecture: 784 -> 256 -> 128 -> 10
+    """
+
+    def __init__(self, seed=42):
+        """Initialize network with He initialization."""
+        np.random.seed(seed)
+
+        # He initialization: scale by sqrt(2/fan_in) for ReLU
+        self.W1 = np.random.randn(784, 256) * np.sqrt(2.0 / 784)
+        self.b1 = np.zeros((1, 256))
+
+        self.W2 = np.random.randn(256, 128) * np.sqrt(2.0 / 256)
+        self.b2 = np.zeros((1, 128))
+
+        self.W3 = np.random.randn(128, 10) * np.sqrt(2.0 / 128)
+        self.b3 = np.zeros((1, 10))
+
+        # Cache for backward pass
+        self.cache = {}
+
+    def relu(self, x):
+        """ReLU activation function."""
+        return np.maximum(0, x)
+
+    def relu_derivative(self, x):
+        """Derivative of ReLU."""
+        return (x > 0).astype(float)
+
+    def softmax(self, x):
+        """Numerically stable softmax."""
+        exp_x = np.exp(x - np.max(x, axis=1, keepdims=True))
+        return exp_x / np.sum(exp_x, axis=1, keepdims=True)
+
+    def forward(self, X):
+        """
+        Forward pass through the network.
+
+        Args:
+            X: Input batch of shape (batch_size, 784)
+
+        Returns:
+            Softmax probabilities of shape (batch_size, 10)
+        """
+        # Layer 1
+        self.cache['z1'] = X @ self.W1 + self.b1
+        self.cache['a1'] = self.relu(self.cache['z1'])
+
+        # Layer 2
+        self.cache['z2'] = self.cache['a1'] @ self.W2 + self.b2
+        self.cache['a2'] = self.relu(self.cache['z2'])
+
+        # Output layer
+        self.cache['z3'] = self.cache['a2'] @ self.W3 + self.b3
+        self.cache['a3'] = self.softmax(self.cache['z3'])
+
+        self.cache['X'] = X  # Save input for backward pass
+
+        return self.cache['a3']
+
+    def backward(self, y_true):
+        """
+        Backward pass using cached activations.
+
+        Args:
+            y_true: One-hot encoded labels of shape (batch_size, 10)
+
+        Returns:
+            Dictionary of gradients for all parameters
+        """
+        batch_size = y_true.shape[0]
+        grads = {}
+
+        # Output layer gradient (softmax + cross-entropy simplifies)
+        dz3 = self.cache['a3'] - y_true  # Shape: (batch_size, 10)
+        grads['W3'] = self.cache['a2'].T @ dz3 / batch_size
+        grads['b3'] = np.mean(dz3, axis=0, keepdims=True)
+
+        # Layer 2 gradients
+        da2 = dz3 @ self.W3.T
+        dz2 = da2 * self.relu_derivative(self.cache['z2'])
+        grads['W2'] = self.cache['a1'].T @ dz2 / batch_size
+        grads['b2'] = np.mean(dz2, axis=0, keepdims=True)
+
+        # Layer 1 gradients
+        da1 = dz2 @ self.W2.T
+        dz1 = da1 * self.relu_derivative(self.cache['z1'])
+        grads['W1'] = self.cache['X'].T @ dz1 / batch_size
+        grads['b1'] = np.mean(dz1, axis=0, keepdims=True)
+
+        return grads
+
+    def cross_entropy_loss(self, y_pred, y_true):
+        """
+        Compute cross-entropy loss.
+
+        Args:
+            y_pred: Predicted probabilities (batch_size, 10)
+            y_true: One-hot encoded labels (batch_size, 10)
+
+        Returns:
+            Scalar loss value
+        """
+        # Clip predictions to avoid log(0)
+        y_pred = np.clip(y_pred, 1e-15, 1 - 1e-15)
+        return -np.mean(np.sum(y_true * np.log(y_pred), axis=1))
+
+    def get_params(self):
+        """Return a list of all parameter arrays."""
+        return [self.W1, self.b1, self.W2, self.b2, self.W3, self.b3]
+
+    def set_params(self, params):
+        """Set all parameters from a list."""
+        self.W1, self.b1, self.W2, self.b2, self.W3, self.b3 = params
+
+    def copy_params(self):
+        """Return deep copy of parameters."""
+        return [p.copy() for p in self.get_params()]
+\end{pythoncode}
+
+\begin{keyconcept}
+\textbf{Implementation Details to Note:}
+\begin{itemize}
+    \item \textbf{He initialization}: We scale weights by $\sqrt{2/\text{fan\_in}}$ for ReLU activations. This prevents vanishing/exploding gradients at initialization.
+    \item \textbf{Numerically stable softmax}: Subtracting $\max(x)$ prevents overflow when computing $e^x$.
+    \item \textbf{Gradient caching}: We store intermediate activations during forward pass to use in backward pass.
+    \item \textbf{Gradient averaging}: We divide by batch size to get the mean gradient.
+\end{itemize}
+\end{keyconcept}
+
+%------------------------------------------------------------------------------
+\section{Step 2: Implement Base Optimizer}
+\label{sec:capstone-base-optimizer}
+
+We'll create a base optimizer class that defines the interface all optimizers must follow.
+
+\begin{pythoncode}
+class Optimizer:
+    """
+    Base optimizer class defining the interface.
+
+    All optimizers must implement:
+    - step(model, grads): Update model parameters using gradients
+    - reset(): Reset optimizer state (for fair comparisons)
+    """
+
+    def __init__(self, learning_rate):
+        self.lr = learning_rate
+
+    def step(self, model, grads):
+        """
+        Update model parameters using computed gradients.
+
+        Args:
+            model: The neural network with get_params()/set_params()
+            grads: Dictionary of gradients {'W1': ..., 'b1': ..., etc.}
+        """
+        raise NotImplementedError("Subclasses must implement step()")
+
+    def reset(self):
+        """Reset optimizer state (momentum, RMSprop cache, etc.)."""
+        pass  # Default: no state to reset
+
+    def get_name(self):
+        """Return optimizer name for logging."""
+        return self.__class__.__name__
+\end{pythoncode}
+
+%------------------------------------------------------------------------------
+\section{Step 3: Implement SGD}
+\label{sec:capstone-sgd}
+
+Vanilla SGD is the simplest optimizer---just move in the opposite direction of the gradient.
+
+\begin{pythoncode}
+class SGD(Optimizer):
+    """
+    Vanilla Stochastic Gradient Descent.
+
+    Update rule: theta = theta - lr * gradient
+    """
+
+    def __init__(self, learning_rate=0.01):
+        super().__init__(learning_rate)
+
+    def step(self, model, grads):
+        """Apply SGD update to all parameters."""
+        param_names = ['W1', 'b1', 'W2', 'b2', 'W3', 'b3']
+        params = model.get_params()
+
+        for i, name in enumerate(param_names):
+            params[i] = params[i] - self.lr * grads[name]
+
+        model.set_params(params)
+\end{pythoncode}
+
+\begin{example}{SGD in Action}{sgd-example}
+Consider a single weight $w = 0.5$ with gradient $g = 0.1$ and learning rate $\eta = 0.1$.
+
+After one SGD step:
+\[
+    w_{\text{new}} = w - \eta \cdot g = 0.5 - 0.1 \times 0.1 = 0.49
+\]
+
+The weight moved slightly in the direction that decreases the loss.
+\end{example}
+
+%------------------------------------------------------------------------------
+\section{Step 4: Implement SGD with Momentum}
+\label{sec:capstone-momentum}
+
+Momentum maintains a velocity vector for each parameter that accumulates gradient history.
+
+\begin{pythoncode}
+class SGDMomentum(Optimizer):
+    """
+    SGD with Momentum - pedagogical implementation.
+
+    Update rule:
+        v = beta * v + gradient
+        theta = theta - lr * v
+
+    NOTE: The velocity v must persist across iterations.
+    Production code should use torch.optim.SGD(momentum=0.9)
+    which handles this automatically via optimizer.state.
+    """
+
+    def __init__(self, learning_rate=0.01, momentum=0.9):
+        super().__init__(learning_rate)
+        self.beta = momentum
+        self.velocity = None  # Will be initialized on first step
+
+    def step(self, model, grads):
+        """Apply momentum update to all parameters."""
+        param_names = ['W1', 'b1', 'W2', 'b2', 'W3', 'b3']
+        params = model.get_params()
+
+        # Initialize velocity on first step
+        if self.velocity is None:
+            self.velocity = {}
+            for name in param_names:
+                self.velocity[name] = np.zeros_like(grads[name])
+
+        for i, name in enumerate(param_names):
+            # Update velocity: v = beta * v + gradient
+            self.velocity[name] = (self.beta * self.velocity[name] +
+                                   grads[name])
+
+            # Update parameter: theta = theta - lr * v
+            params[i] = params[i] - self.lr * self.velocity[name]
+
+        model.set_params(params)
+
+    def reset(self):
+        """Reset velocity to zero."""
+        self.velocity = None
+
+    def get_name(self):
+        return f"SGD+Momentum(beta={self.beta})"
+\end{pythoncode}
+
+\begin{intuition}
+\textbf{Why $\beta = 0.9$?}
+
+With $\beta = 0.9$, the effective window of gradient history is about $1/(1-\beta) = 10$ steps. Gradients from more than 10 steps ago contribute less than $0.9^{10} \approx 35\%$ of their original weight.
+
+\begin{itemize}
+    \item \textbf{Too small} ($\beta = 0.5$): Not enough smoothing, behaves almost like SGD
+    \item \textbf{Too large} ($\beta = 0.99$): Too much inertia, may overshoot and oscillate
+    \item \textbf{Just right} ($\beta = 0.9$): Good balance of acceleration and stability
+\end{itemize}
+\end{intuition}
+
+%------------------------------------------------------------------------------
+\section{Step 5: Implement RMSprop}
+\label{sec:capstone-rmsprop}
+
+RMSprop adapts learning rates per-parameter by tracking squared gradient magnitudes.
+
+\begin{pythoncode}
+class RMSprop(Optimizer):
+    """
+    RMSprop: Root Mean Square Propagation - pedagogical implementation.
+
+    Update rule:
+        s = rho * s + (1 - rho) * gradient^2
+        theta = theta - lr * gradient / sqrt(s + epsilon)
+
+    NOTE: The cache s must persist across iterations.
+    Production code should use torch.optim.RMSprop which handles
+    this automatically via optimizer.state.
+    """
+
+    def __init__(self, learning_rate=0.001, rho=0.99, epsilon=1e-8):
+        super().__init__(learning_rate)
+        self.rho = rho
+        self.epsilon = epsilon
+        self.cache = None  # Running average of squared gradients
+
+    def step(self, model, grads):
+        """Apply RMSprop update to all parameters."""
+        param_names = ['W1', 'b1', 'W2', 'b2', 'W3', 'b3']
+        params = model.get_params()
+
+        # Initialize cache on first step
+        if self.cache is None:
+            self.cache = {}
+            for name in param_names:
+                self.cache[name] = np.zeros_like(grads[name])
+
+        for i, name in enumerate(param_names):
+            # Update running average of squared gradients
+            self.cache[name] = (self.rho * self.cache[name] +
+                               (1 - self.rho) * grads[name]**2)
+
+            # Compute adaptive learning rate and update
+            params[i] = params[i] - (self.lr * grads[name] /
+                                     (np.sqrt(self.cache[name]) + self.epsilon))
+
+        model.set_params(params)
+
+    def reset(self):
+        """Reset squared gradient cache."""
+        self.cache = None
+
+    def get_name(self):
+        return f"RMSprop(rho={self.rho})"
+\end{pythoncode}
+
+\begin{example}{RMSprop Adapts to Gradient Scale}{rmsprop-example}
+Consider two parameters with very different gradient magnitudes:
+\begin{itemize}
+    \item Parameter A: gradient $g_A = 10.0$ (steep direction)
+    \item Parameter B: gradient $g_B = 0.01$ (flat direction)
+\end{itemize}
+
+After a few steps with $\rho = 0.99$, the caches become approximately $s_A \approx 100$ and $s_B \approx 0.0001$.
+
+Effective updates (with $\eta = 0.001$):
+\begin{align*}
+    \Delta \theta_A &= \frac{0.001 \times 10.0}{\sqrt{100}} = 0.001 \\
+    \Delta \theta_B &= \frac{0.001 \times 0.01}{\sqrt{0.0001}} = 0.001
+\end{align*}
+
+Despite 1000x different gradients, both parameters make equal-sized steps! RMSprop ``equalizes'' the optimization landscape.
+\end{example}
+
+%------------------------------------------------------------------------------
+\section{Step 6: Implement Adam}
+\label{sec:capstone-adam}
+
+Adam combines the best of momentum and RMSprop, plus bias correction.
+
+\begin{pythoncode}
+class Adam(Optimizer):
+    """
+    Adam: Adaptive Moment Estimation - pedagogical implementation.
+
+    Combines momentum (first moment) with RMSprop (second moment)
+    and adds bias correction for early steps.
+
+    Update rule:
+        m = beta1 * m + (1 - beta1) * gradient        (momentum)
+        v = beta2 * v + (1 - beta2) * gradient^2      (RMSprop)
+        m_hat = m / (1 - beta1^t)                     (bias correction)
+        v_hat = v / (1 - beta2^t)                     (bias correction)
+        theta = theta - lr * m_hat / (sqrt(v_hat) + epsilon)
+
+    NOTE: The moments m, v and timestep t must persist across iterations.
+    Production code should use torch.optim.Adam which handles
+    this automatically via optimizer.state.
+    """
+
+    def __init__(self, learning_rate=0.001, beta1=0.9, beta2=0.999,
+                 epsilon=1e-8):
+        super().__init__(learning_rate)
+        self.beta1 = beta1
+        self.beta2 = beta2
+        self.epsilon = epsilon
+        self.m = None  # First moment (momentum)
+        self.v = None  # Second moment (RMSprop-like)
+        self.t = 0     # Timestep for bias correction
+
+    def step(self, model, grads):
+        """Apply Adam update to all parameters."""
+        param_names = ['W1', 'b1', 'W2', 'b2', 'W3', 'b3']
+        params = model.get_params()
+
+        # Initialize moment estimates on first step
+        if self.m is None:
+            self.m = {}
+            self.v = {}
+            for name in param_names:
+                self.m[name] = np.zeros_like(grads[name])
+                self.v[name] = np.zeros_like(grads[name])
+
+        # Increment timestep
+        self.t += 1
+
+        for i, name in enumerate(param_names):
+            # Update biased first moment estimate (momentum)
+            self.m[name] = (self.beta1 * self.m[name] +
+                          (1 - self.beta1) * grads[name])
+
+            # Update biased second moment estimate (RMSprop)
+            self.v[name] = (self.beta2 * self.v[name] +
+                          (1 - self.beta2) * grads[name]**2)
+
+            # Compute bias-corrected estimates
+            m_hat = self.m[name] / (1 - self.beta1**self.t)
+            v_hat = self.v[name] / (1 - self.beta2**self.t)
+
+            # Update parameters
+            params[i] = params[i] - (self.lr * m_hat /
+                                     (np.sqrt(v_hat) + self.epsilon))
+
+        model.set_params(params)
+
+    def reset(self):
+        """Reset moment estimates and timestep."""
+        self.m = None
+        self.v = None
+        self.t = 0
+
+    def get_name(self):
+        return f"Adam(beta1={self.beta1}, beta2={self.beta2})"
+\end{pythoncode}
+
+\begin{important}
+\textbf{The Bias Correction Factor in Detail}
+
+At $t=1$ with default $\beta_1 = 0.9$ and $\beta_2 = 0.999$:
+\begin{align*}
+    \text{Correction for } m: \quad \frac{1}{1 - 0.9^1} &= \frac{1}{0.1} = 10\times \\
+    \text{Correction for } v: \quad \frac{1}{1 - 0.999^1} &= \frac{1}{0.001} = 1000\times
+\end{align*}
+
+Without this correction, the first few updates would be far too small because the moment estimates start at zero. By $t=100$:
+\begin{align*}
+    \text{Correction for } m: \quad \frac{1}{1 - 0.9^{100}} &\approx 1.0000 \\
+    \text{Correction for } v: \quad \frac{1}{1 - 0.999^{100}} &\approx 1.105
+\end{align*}
+
+The correction quickly becomes negligible.
+\end{important}
+
+%------------------------------------------------------------------------------
+\section{Step 7: Training Loop}
+\label{sec:capstone-training}
+
+Now we need a training function that works with any optimizer and tracks metrics.
+
+\begin{pythoncode}
+def load_mnist():
+    """
+    Load MNIST dataset using sklearn.
+    Returns train/val/test splits with normalized pixel values.
+
+    Split ratios: 80% train, 10% validation, 10% test
+    - Validation: used for optimizer comparison during training
+    - Test: used only once at the end for final evaluation
+    """
+    from sklearn.datasets import fetch_openml
+    from sklearn.model_selection import train_test_split
+
+    # Load MNIST
+    print("Loading MNIST dataset...")
+    mnist = fetch_openml('mnist_784', version=1, as_frame=False)
+    X, y = mnist.data, mnist.target.astype(int)
+
+    # Normalize to [0, 1]
+    X = X / 255.0
+
+    # One-hot encode labels
+    y_onehot = np.zeros((len(y), 10))
+    y_onehot[np.arange(len(y)), y] = 1
+
+    # First split: separate test set (10%)
+    X_temp, X_test, y_temp, y_test = train_test_split(
+        X, y_onehot, test_size=0.1, random_state=42, stratify=y
+    )
+
+    # Second split: separate validation from training (10% of original = 11.1% of temp)
+    X_train, X_val, y_train, y_val = train_test_split(
+        X_temp, y_temp, test_size=0.1111, random_state=42,
+        stratify=np.argmax(y_temp, axis=1)
+    )
+
+    print(f"Training samples: {len(X_train)}")
+    print(f"Validation samples: {len(X_val)}")
+    print(f"Test samples: {len(X_test)}")
+
+    return X_train, X_val, X_test, y_train, y_val, y_test
+
+
+def compute_accuracy(model, X, y):
+    """
+    Compute classification accuracy.
+
+    Args:
+        model: The trained MLP
+        X: Input features
+        y: One-hot encoded labels
+
+    Returns:
+        Accuracy as a float in [0, 1]
+    """
+    y_pred = model.forward(X)
+    pred_classes = np.argmax(y_pred, axis=1)
+    true_classes = np.argmax(y, axis=1)
+    return np.mean(pred_classes == true_classes)
+
+
+def create_batches(X, y, batch_size, shuffle=True):
+    """
+    Create mini-batches from data.
+
+    Args:
+        X: Input features
+        y: Labels
+        batch_size: Size of each batch
+        shuffle: Whether to shuffle data
+
+    Yields:
+        (X_batch, y_batch) tuples
+    """
+    n_samples = len(X)
+    indices = np.arange(n_samples)
+
+    if shuffle:
+        np.random.shuffle(indices)
+
+    for start in range(0, n_samples, batch_size):
+        end = min(start + batch_size, n_samples)
+        batch_idx = indices[start:end]
+        yield X[batch_idx], y[batch_idx]
+
+
+def train(model, optimizer, X_train, y_train, X_val, y_val,
+          epochs=20, batch_size=128, verbose=True):
+    """
+    Train the model using the given optimizer.
+
+    Args:
+        model: The MLP to train
+        optimizer: The optimizer to use
+        X_train, y_train: Training data
+        X_val, y_val: Validation data (for monitoring, NOT test data)
+        epochs: Number of training epochs
+        batch_size: Mini-batch size
+        verbose: Whether to print progress
+
+    Returns:
+        Dictionary with training history
+
+    Note: We evaluate on validation set each epoch for optimizer comparison.
+          The test set is held out and used only for final evaluation.
+    """
+    history = {
+        'train_loss': [],
+        'train_acc': [],
+        'val_loss': [],
+        'val_acc': [],
+        'epoch_times': []
+    }
+
+    import time
+
+    for epoch in range(epochs):
+        epoch_start = time.time()
+        epoch_losses = []
+
+        # Training loop
+        for X_batch, y_batch in create_batches(X_train, y_train, batch_size):
+            # Forward pass
+            y_pred = model.forward(X_batch)
+            loss = model.cross_entropy_loss(y_pred, y_batch)
+            epoch_losses.append(loss)
+
+            # Backward pass
+            grads = model.backward(y_batch)
+
+            # Optimizer step
+            optimizer.step(model, grads)
+
+        epoch_time = time.time() - epoch_start
+
+        # Compute metrics
+        train_loss = np.mean(epoch_losses)
+        train_acc = compute_accuracy(model, X_train, y_train)
+
+        # Validation metrics (NOT test metrics!)
+        val_pred = model.forward(X_val)
+        val_loss = model.cross_entropy_loss(val_pred, y_val)
+        val_acc = compute_accuracy(model, X_val, y_val)
+
+        # Record history
+        history['train_loss'].append(train_loss)
+        history['train_acc'].append(train_acc)
+        history['val_loss'].append(val_loss)
+        history['val_acc'].append(val_acc)
+        history['epoch_times'].append(epoch_time)
+
+        if verbose:
+            print(f"Epoch {epoch+1:3d}/{epochs} | "
+                  f"Loss: {train_loss:.4f} | "
+                  f"Train Acc: {train_acc:.4f} | "
+                  f"Val Acc: {val_acc:.4f} | "
+                  f"Time: {epoch_time:.2f}s")
+
+    return history
+\end{pythoncode}
+
+%------------------------------------------------------------------------------
+\section{Step 8: Run Experiments}
+\label{sec:capstone-experiments}
+
+Now let's run our showdown! We'll train with each optimizer using learning rates typical for each method.
+
+\begin{pythoncode}
+def run_optimizer_showdown():
+    """
+    Main experiment: compare all optimizers on MNIST.
+
+    Uses proper train/val/test split:
+    - Training: 80% for parameter updates
+    - Validation: 10% for optimizer comparison during training
+    - Test: 10% for final evaluation (used only once at the end)
+    """
+    # Load data with proper three-way split
+    X_train, X_val, X_test, y_train, y_val, y_test = load_mnist()
+
+    # Define optimizers with typical learning rates
+    optimizers = [
+        SGD(learning_rate=0.1),
+        SGDMomentum(learning_rate=0.01, momentum=0.9),
+        RMSprop(learning_rate=0.001, rho=0.99),
+        Adam(learning_rate=0.001, beta1=0.9, beta2=0.999),
+    ]
+
+    # Store initial parameters for fair comparison
+    # (all optimizers start from the same initialization)
+    base_model = MLP(seed=42)
+    initial_params = base_model.copy_params()
+
+    # Run experiments
+    all_results = {}
+    trained_models = {}  # Store models for final test evaluation
+
+    for opt in optimizers:
+        print(f"\n{'='*60}")
+        print(f"Training with {opt.get_name()}")
+        print(f"{'='*60}")
+
+        # Reset model to initial parameters
+        model = MLP(seed=42)
+        model.set_params([p.copy() for p in initial_params])
+
+        # Reset optimizer state
+        opt.reset()
+
+        # Train using validation set for monitoring (NOT test set!)
+        history = train(
+            model, opt,
+            X_train, y_train,
+            X_val, y_val,  # Validation set, not test set
+            epochs=20,
+            batch_size=128
+        )
+
+        all_results[opt.get_name()] = history
+        trained_models[opt.get_name()] = model
+
+    # Final evaluation on held-out test set (done only once!)
+    print(f"\n{'='*60}")
+    print("FINAL TEST SET EVALUATION (single evaluation)")
+    print(f"{'='*60}")
+    for name, model in trained_models.items():
+        test_acc = compute_accuracy(model, X_test, y_test)
+        all_results[name]['final_test_acc'] = test_acc
+        print(f"{name.split('(')[0]:<20} Test Accuracy: {test_acc*100:.2f}%")
+
+    return all_results
+
+
+# Run the experiments
+if __name__ == "__main__":
+    results = run_optimizer_showdown()
+\end{pythoncode}
+
+\begin{keyconcept}
+\textbf{Why Different Learning Rates?}
+
+Each optimizer operates best at different scales:
+\begin{itemize}
+    \item \textbf{SGD} ($\eta = 0.1$): Needs larger learning rate because it has no momentum or adaptation
+    \item \textbf{SGD+Momentum} ($\eta = 0.01$): Smaller rate because momentum amplifies steps
+    \item \textbf{RMSprop} ($\eta = 0.001$): Small rate because adaptive scaling can make large steps
+    \item \textbf{Adam} ($\eta = 0.001$): Same as RMSprop; this is the well-known default
+\end{itemize}
+
+These are ``tuned'' starting points. In practice, you would search around these values.
+\end{keyconcept}
+
+%------------------------------------------------------------------------------
+\section{Step 9: Analyze Results}
+\label{sec:capstone-analysis}
+
+Let's create visualizations to compare the optimizers.
+
+\begin{pythoncode}
+import matplotlib.pyplot as plt
+
+def plot_results(all_results):
+    """
+    Create comparison plots for all optimizers.
+
+    Note: Plots show validation accuracy (used during training for comparison).
+    Final test accuracy is reported separately and evaluated only once.
+    """
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+
+    # Color scheme
+    colors = {
+        'SGD': '#1f77b4',
+        'SGD+Momentum': '#ff7f0e',
+        'RMSprop': '#2ca02c',
+        'Adam': '#d62728'
+    }
+
+    # Helper to get color (check more specific names first)
+    def get_color(name):
+        # Check 'SGD+Momentum' before 'SGD' to avoid substring mismatch
+        if 'Momentum' in name:
+            return colors['SGD+Momentum']
+        for key in ['Adam', 'RMSprop', 'SGD']:
+            if key in name:
+                return colors[key]
+        return 'black'
+
+    epochs = range(1, 21)
+
+    # Plot 1: Training Loss
+    ax1 = axes[0, 0]
+    for name, history in all_results.items():
+        ax1.plot(epochs, history['train_loss'],
+                label=name.split('(')[0],  # Shorter name
+                color=get_color(name), linewidth=2)
+    ax1.set_xlabel('Epoch')
+    ax1.set_ylabel('Training Loss')
+    ax1.set_title('Training Loss Comparison')
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+    ax1.set_yscale('log')
+
+    # Plot 2: Validation Accuracy (NOT test accuracy!)
+    ax2 = axes[0, 1]
+    for name, history in all_results.items():
+        ax2.plot(epochs, [a * 100 for a in history['val_acc']],
+                label=name.split('(')[0],
+                color=get_color(name), linewidth=2)
+    ax2.set_xlabel('Epoch')
+    ax2.set_ylabel('Validation Accuracy (%)')
+    ax2.set_title('Validation Accuracy Comparison')
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+    ax2.axhline(y=95, color='gray', linestyle='--', alpha=0.5)
+
+    # Plot 3: Training vs Validation Accuracy (generalization gap)
+    ax3 = axes[1, 0]
+    for name, history in all_results.items():
+        train_acc = [a * 100 for a in history['train_acc']]
+        val_acc = [a * 100 for a in history['val_acc']]
+        gap = [t - v for t, v in zip(train_acc, val_acc)]
+        ax3.plot(epochs, gap,
+                label=name.split('(')[0],
+                color=get_color(name), linewidth=2)
+    ax3.set_xlabel('Epoch')
+    ax3.set_ylabel('Train - Validation Accuracy (%)')
+    ax3.set_title('Generalization Gap')
+    ax3.legend()
+    ax3.grid(True, alpha=0.3)
+
+    # Plot 4: Convergence speed (epochs to reach 95% validation accuracy)
+    ax4 = axes[1, 1]
+    final_metrics = []
+    for name, history in all_results.items():
+        val_acc = history['val_acc']
+        # Find first epoch to reach 95% validation accuracy
+        epochs_to_95 = None
+        for i, acc in enumerate(val_acc):
+            if acc >= 0.95:
+                epochs_to_95 = i + 1
+                break
+
+        final_metrics.append({
+            'name': name.split('(')[0],
+            'final_val_acc': val_acc[-1] * 100,
+            'epochs_to_95': epochs_to_95 if epochs_to_95 else '>20',
+            'total_time': sum(history['epoch_times'])
+        })
+
+    # Create bar chart showing epochs to 95% (convergence speed)
+    names = [m['name'] for m in final_metrics]
+    epochs_values = [m['epochs_to_95'] if isinstance(m['epochs_to_95'], int)
+                     else 21 for m in final_metrics]
+    bar_colors = [get_color(m['name']) for m in final_metrics]
+
+    bars = ax4.bar(names, epochs_values, color=bar_colors)
+    ax4.set_ylabel('Epochs to 95% Validation Accuracy')
+    ax4.set_title('Convergence Speed (fewer epochs = faster)')
+    ax4.set_ylim(0, 25)
+
+    # Add value labels on bars
+    for bar, m in zip(bars, final_metrics):
+        label = str(m['epochs_to_95'])
+        ax4.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.3,
+                label, ha='center', va='bottom', fontsize=10)
+
+    plt.tight_layout()
+    plt.savefig('optimizer_comparison.png', dpi=150, bbox_inches='tight')
+    plt.show()
+
+    return final_metrics
+
+
+def print_summary_table(final_metrics, all_results):
+    """
+    Print a summary table of results.
+
+    Shows both validation accuracy (used during training) and
+    final test accuracy (evaluated only once at the end).
+    """
+    print("\n" + "="*80)
+    print("OPTIMIZER SHOWDOWN RESULTS")
+    print("="*80)
+
+    print(f"\n{'Optimizer':<20} {'Val Acc':<12} {'Test Acc':<12} "
+          f"{'Epochs to 95%':<15} {'Total Time':<12}")
+    print("-"*80)
+
+    for name, history in all_results.items():
+        val_acc = history['val_acc']
+        final_val_acc = val_acc[-1] * 100
+        # Final test accuracy (evaluated only once)
+        final_test_acc = history.get('final_test_acc', 0) * 100
+        total_time = sum(history['epoch_times'])
+
+        # Find epochs to 95% validation accuracy
+        epochs_to_95 = "N/A"
+        for i, acc in enumerate(val_acc):
+            if acc >= 0.95:
+                epochs_to_95 = str(i + 1)
+                break
+
+        short_name = name.split('(')[0]
+        print(f"{short_name:<20} {final_val_acc:<12.2f}% {final_test_acc:<12.2f}% "
+              f"{epochs_to_95:<15} {total_time:<12.2f}s")
+
+    print("\nNote: Val Acc = validation accuracy (monitored during training)")
+    print("      Test Acc = held-out test accuracy (evaluated only once)")
+
+
+# After running experiments:
+# final_metrics = plot_results(results)
+# print_summary_table(final_metrics, results)
+\end{pythoncode}
+
+\subsection{Learning Rate Sensitivity Analysis}
+
+To understand how each optimizer handles different learning rates, let's sweep across values.
+
+\begin{pythoncode}
+def learning_rate_sensitivity(X_train, y_train, X_val, y_val):
+    """
+    Test each optimizer across a range of learning rates.
+
+    Uses validation set for comparison (not test set).
+    """
+    # Learning rate multipliers (relative to default)
+    multipliers = [0.1, 0.3, 1.0, 3.0, 10.0]
+
+    # Base learning rates
+    base_lrs = {
+        'SGD': 0.1,
+        'Momentum': 0.01,
+        'RMSprop': 0.001,
+        'Adam': 0.001
+    }
+
+    sensitivity_results = {name: {'lrs': [], 'accs': []}
+                          for name in base_lrs}
+
+    base_model = MLP(seed=42)
+    initial_params = base_model.copy_params()
+
+    for mult in multipliers:
+        print(f"\nTesting learning rate multiplier: {mult}x")
+
+        for name, base_lr in base_lrs.items():
+            lr = base_lr * mult
+
+            # Create optimizer
+            if name == 'SGD':
+                opt = SGD(learning_rate=lr)
+            elif name == 'Momentum':
+                opt = SGDMomentum(learning_rate=lr, momentum=0.9)
+            elif name == 'RMSprop':
+                opt = RMSprop(learning_rate=lr)
+            else:  # Adam
+                opt = Adam(learning_rate=lr)
+
+            # Train for 10 epochs
+            model = MLP(seed=42)
+            model.set_params([p.copy() for p in initial_params])
+            opt.reset()
+
+            history = train(model, opt, X_train, y_train,
+                          X_val, y_val, epochs=10,
+                          batch_size=128, verbose=False)
+
+            final_acc = history['val_acc'][-1]
+            sensitivity_results[name]['lrs'].append(lr)
+            sensitivity_results[name]['accs'].append(final_acc)
+
+            print(f"  {name}: lr={lr:.4f}, val_acc={final_acc:.4f}")
+
+    return sensitivity_results
+
+
+def plot_sensitivity(sensitivity_results):
+    """
+    Plot learning rate sensitivity curves.
+    """
+    plt.figure(figsize=(10, 6))
+
+    colors = {
+        'SGD': '#1f77b4',
+        'Momentum': '#ff7f0e',
+        'RMSprop': '#2ca02c',
+        'Adam': '#d62728'
+    }
+
+    for name, data in sensitivity_results.items():
+        plt.plot(data['lrs'], [a * 100 for a in data['accs']],
+                'o-', label=name, color=colors[name],
+                linewidth=2, markersize=8)
+
+    plt.xlabel('Learning Rate')
+    plt.ylabel('Validation Accuracy after 10 epochs (%)')
+    plt.title('Learning Rate Sensitivity')
+    plt.xscale('log')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.savefig('lr_sensitivity.png', dpi=150, bbox_inches='tight')
+    plt.show()
+\end{pythoncode}
+
+%------------------------------------------------------------------------------
+\section{Key Findings}
+\label{sec:capstone-findings}
+
+After running the experiments, here's what you should observe (based on \textit{validation} accuracy, not test accuracy---the test set is evaluated only once at the end):
+
+\begin{keyconcept}
+\textbf{Convergence Speed:}
+\begin{itemize}
+    \item \textbf{Adam} converges fastest, typically reaching 95\% validation accuracy in 3--5 epochs
+    \item \textbf{RMSprop} is close behind, often 4--6 epochs
+    \item \textbf{SGD+Momentum} is moderate, usually 6--10 epochs
+    \item \textbf{Vanilla SGD} is slowest, often needing 10+ epochs or failing to reach 95\%
+\end{itemize}
+\end{keyconcept}
+
+\begin{keyconcept}
+\textbf{Final Accuracy:}
+All well-tuned optimizers achieve similar final validation accuracy (97--98\%) on MNIST. The differences are small---this is a ``solved'' problem. On harder datasets, differences become more pronounced. Final test accuracy (evaluated once) should be similar to validation accuracy if the methodology is correct.
+\end{keyconcept}
+
+\begin{keyconcept}
+\textbf{Training Stability:}
+\begin{itemize}
+    \item \textbf{Adam} shows the smoothest loss curves
+    \item \textbf{RMSprop} is almost as smooth
+    \item \textbf{SGD+Momentum} shows some oscillation, especially early
+    \item \textbf{Vanilla SGD} can be quite noisy, especially with larger learning rates
+\end{itemize}
+\end{keyconcept}
+
+\begin{keyconcept}
+\textbf{Learning Rate Sensitivity:}
+\begin{itemize}
+    \item \textbf{Adam} is most robust---works well across a wide range
+    \item \textbf{RMSprop} is also fairly robust
+    \item \textbf{SGD+Momentum} is sensitive---too high diverges, too low stalls
+    \item \textbf{Vanilla SGD} is most sensitive---narrow range of working values
+\end{itemize}
+\end{keyconcept}
+
+\begin{table}[htbp]
+\centering
+\caption{Summary of optimizer characteristics on MNIST (validation set metrics)}
+\label{tab:optimizer-summary}
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+\textbf{Metric} & \textbf{SGD} & \textbf{Momentum} & \textbf{RMSprop} & \textbf{Adam} \\
+\midrule
+Convergence Speed & Slow & Medium & Fast & Fastest \\
+Final Val Accuracy & 97.0\% & 97.8\% & 97.9\% & 98.0\% \\
+Stability & Low & Medium & High & Highest \\
+LR Sensitivity & High & Medium & Low & Lowest \\
+Memory Overhead & None & 1x params & 1x params & 2x params \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+%------------------------------------------------------------------------------
+\section{When to Use Each Optimizer}
+\label{sec:capstone-recommendations}
+
+Based on our experiments and broader experience, here are practical recommendations:
+
+\begin{principle}
+\textbf{Adam/AdamW: The Default Choice}
+\begin{itemize}
+    \item Use for \textbf{quick prototyping}---works well out of the box
+    \item Use for \textbf{Transformers and NLP}---standard choice, well-tested
+    \item Use for \textbf{training from scratch} when you don't want to tune learning rates
+    \item \textbf{Typical settings}: lr=0.001, betas=(0.9, 0.999), weight\_decay=0.01
+\end{itemize}
+\end{principle}
+
+\begin{principle}
+\textbf{SGD+Momentum: For Maximum Performance}
+\begin{itemize}
+    \item Use for \textbf{CNNs on image classification}---often generalizes better
+    \item Use when \textbf{squeezing out last few percent accuracy matters}
+    \item Requires \textbf{more careful tuning} of learning rate and schedule
+    \item \textbf{Typical settings}: lr=0.1 with cosine/step decay, momentum=0.9
+\end{itemize}
+\end{principle}
+
+\begin{principle}
+\textbf{RMSprop: For Recurrent Networks}
+\begin{itemize}
+    \item Use for \textbf{RNNs and LSTMs}---handles exploding gradients well
+    \item Use when Adam behaves unexpectedly
+    \item \textbf{Typical settings}: lr=0.001, rho=0.9 or 0.99
+\end{itemize}
+\end{principle}
+
+\begin{principle}
+\textbf{Vanilla SGD: For Research and Understanding}
+\begin{itemize}
+    \item Use when \textbf{simplicity matters} for reproducibility
+    \item Use for \textbf{theoretical analysis}---easier to reason about
+    \item Generally \textbf{not recommended} for practical training
+\end{itemize}
+\end{principle}
+
+\begin{perspective}
+\textbf{The Generalization Debate}
+
+There's ongoing research about whether SGD finds ``better'' minima than Adam. The hypothesis is that SGD's noise helps it find wider minima that generalize better. In practice:
+\begin{itemize}
+    \item On \textbf{ImageNet with ResNets}, SGD+Momentum often beats Adam by 0.5--1\%
+    \item On \textbf{Transformers}, AdamW consistently wins
+    \item On \textbf{MNIST and CIFAR}, differences are minimal with proper tuning
+\end{itemize}
+The ``best'' optimizer depends on your specific problem, model, and how much time you have for tuning.
+\end{perspective}
+
+%------------------------------------------------------------------------------
+\section{Extensions}
+\label{sec:capstone-extensions}
+
+Ready to go further? Here are challenging extensions:
+
+\subsection{Extension 1: Learning Rate Scheduling}
+
+Add learning rate schedules to your training loop:
+
+\begin{pythoncode}
+def cosine_schedule(epoch, total_epochs, initial_lr, min_lr=1e-6):
+    """Cosine annealing learning rate schedule."""
+    return min_lr + 0.5 * (initial_lr - min_lr) * \
+           (1 + np.cos(np.pi * epoch / total_epochs))
+
+def step_decay_schedule(epoch, initial_lr, drop_factor=0.1,
+                        drop_epochs=[30, 60, 80]):
+    """Step decay learning rate schedule."""
+    lr = initial_lr
+    for drop_epoch in drop_epochs:
+        if epoch >= drop_epoch:
+            lr *= drop_factor
+    return lr
+
+def warmup_schedule(epoch, warmup_epochs, initial_lr):
+    """Linear warmup for the first few epochs."""
+    if epoch < warmup_epochs:
+        return initial_lr * (epoch + 1) / warmup_epochs
+    return initial_lr
+\end{pythoncode}
+
+\textbf{Challenge}: Implement training with cosine annealing and compare results. Does scheduling help Adam as much as SGD?
+
+\subsection{Extension 2: AdamW Implementation}
+
+Implement AdamW with decoupled weight decay:
+
+\begin{pythoncode}
+class AdamW(Adam):
+    """
+    AdamW: Adam with decoupled weight decay.
+
+    The key difference: weight decay is applied directly to parameters,
+    not through the gradient. This leads to better generalization.
+    """
+
+    def __init__(self, learning_rate=0.001, beta1=0.9, beta2=0.999,
+                 epsilon=1e-8, weight_decay=0.01):
+        super().__init__(learning_rate, beta1, beta2, epsilon)
+        self.weight_decay = weight_decay
+
+    def step(self, model, grads):
+        """Apply AdamW update with decoupled weight decay."""
+        param_names = ['W1', 'b1', 'W2', 'b2', 'W3', 'b3']
+        params = model.get_params()
+
+        if self.m is None:
+            self.m = {}
+            self.v = {}
+            for name in param_names:
+                self.m[name] = np.zeros_like(grads[name])
+                self.v[name] = np.zeros_like(grads[name])
+
+        self.t += 1
+
+        for i, name in enumerate(param_names):
+            # Standard Adam moment updates
+            self.m[name] = self.beta1 * self.m[name] + \
+                          (1 - self.beta1) * grads[name]
+            self.v[name] = self.beta2 * self.v[name] + \
+                          (1 - self.beta2) * grads[name]**2
+
+            m_hat = self.m[name] / (1 - self.beta1**self.t)
+            v_hat = self.v[name] / (1 - self.beta2**self.t)
+
+            # Adam update
+            adam_update = self.lr * m_hat / (np.sqrt(v_hat) + self.epsilon)
+
+            # Decoupled weight decay (only for weights, not biases)
+            if 'W' in name:  # Apply weight decay only to weight matrices
+                weight_decay_term = self.lr * self.weight_decay * params[i]
+                params[i] = params[i] - adam_update - weight_decay_term
+            else:
+                params[i] = params[i] - adam_update
+
+        model.set_params(params)
+
+    def get_name(self):
+        return f"AdamW(wd={self.weight_decay})"
+\end{pythoncode}
+
+\textbf{Challenge}: Compare Adam with L2 regularization vs. AdamW. When does the difference matter most?
+
+\subsection{Extension 3: Harder Dataset}
+
+MNIST is relatively easy. Try CIFAR-10 for a more challenging benchmark:
+
+\begin{pythoncode}
+def load_cifar10():
+    """
+    Load CIFAR-10 and preprocess for our MLP.
+    Note: CNNs work much better on CIFAR-10, but this tests optimizers.
+
+    Returns train/val/test splits (80%/10%/10%) with proper shuffling.
+    """
+    from sklearn.datasets import fetch_openml
+    from sklearn.model_selection import train_test_split
+
+    # Note: OpenML uses 'CIFAR_10' (with underscore), not 'cifar-10'
+    print("Loading CIFAR-10...")
+    cifar = fetch_openml('CIFAR_10', version=1, as_frame=False)
+    X, y = cifar.data, cifar.target.astype(int)
+
+    # Normalize
+    X = X / 255.0
+
+    # One-hot encode
+    y_onehot = np.zeros((len(y), 10))
+    y_onehot[np.arange(len(y)), y] = 1
+
+    # Proper stratified split (don't just take first 50000!)
+    # First split: separate test set (10%)
+    X_temp, X_test, y_temp, y_test = train_test_split(
+        X, y_onehot, test_size=0.1, random_state=42, stratify=y
+    )
+
+    # Second split: separate validation from training
+    X_train, X_val, y_train, y_val = train_test_split(
+        X_temp, y_temp, test_size=0.1111, random_state=42,
+        stratify=np.argmax(y_temp, axis=1)
+    )
+
+    print(f"Training samples: {len(X_train)}")
+    print(f"Validation samples: {len(X_val)}")
+    print(f"Test samples: {len(X_test)}")
+
+    return X_train, X_val, X_test, y_train, y_val, y_test
+\end{pythoncode}
+
+You'll need to adjust the network (input size 3072 for 32x32x3 images) and likely add dropout or other regularization.
+
+\subsection{Extension 4: Gradient Clipping}
+
+Implement gradient clipping to stabilize training with large learning rates:
+
+\begin{pythoncode}
+def clip_gradients(grads, max_norm=1.0):
+    """
+    Clip gradients by global norm.
+
+    If ||grads|| > max_norm, scale all gradients so ||grads|| = max_norm.
+    """
+    # Compute global norm
+    total_norm = 0
+    for name, grad in grads.items():
+        total_norm += np.sum(grad ** 2)
+    total_norm = np.sqrt(total_norm)
+
+    # Clip if necessary
+    if total_norm > max_norm:
+        scale = max_norm / (total_norm + 1e-8)
+        grads = {name: grad * scale for name, grad in grads.items()}
+
+    return grads, total_norm
+\end{pythoncode}
+
+\textbf{Challenge}: Does gradient clipping allow SGD to work with larger learning rates?
+
+%------------------------------------------------------------------------------
+\section{Complete Solution}
+\label{sec:capstone-solution}
+
+Here is the complete, runnable code combining all components:
+
+\begin{pythoncode}
+"""
+Optimizer Showdown: Complete Implementation
+Comparing SGD, Momentum, RMSprop, and Adam on MNIST
+
+Run this script to reproduce all experiments:
+    python optimizer_showdown.py
+"""
+
+import numpy as np
+import matplotlib.pyplot as plt
+import time
+
+
+# ==============================================================================
+# Neural Network Implementation
+# ==============================================================================
+
+class MLP:
+    """Multi-Layer Perceptron: 784 -> 256 -> 128 -> 10"""
+
+    def __init__(self, seed=42):
+        np.random.seed(seed)
+        self.W1 = np.random.randn(784, 256) * np.sqrt(2.0 / 784)
+        self.b1 = np.zeros((1, 256))
+        self.W2 = np.random.randn(256, 128) * np.sqrt(2.0 / 256)
+        self.b2 = np.zeros((1, 128))
+        self.W3 = np.random.randn(128, 10) * np.sqrt(2.0 / 128)
+        self.b3 = np.zeros((1, 10))
+        self.cache = {}
+
+    def relu(self, x):
+        return np.maximum(0, x)
+
+    def relu_derivative(self, x):
+        return (x > 0).astype(float)
+
+    def softmax(self, x):
+        exp_x = np.exp(x - np.max(x, axis=1, keepdims=True))
+        return exp_x / np.sum(exp_x, axis=1, keepdims=True)
+
+    def forward(self, X):
+        self.cache['z1'] = X @ self.W1 + self.b1
+        self.cache['a1'] = self.relu(self.cache['z1'])
+        self.cache['z2'] = self.cache['a1'] @ self.W2 + self.b2
+        self.cache['a2'] = self.relu(self.cache['z2'])
+        self.cache['z3'] = self.cache['a2'] @ self.W3 + self.b3
+        self.cache['a3'] = self.softmax(self.cache['z3'])
+        self.cache['X'] = X
+        return self.cache['a3']
+
+    def backward(self, y_true):
+        batch_size = y_true.shape[0]
+        grads = {}
+
+        dz3 = self.cache['a3'] - y_true
+        grads['W3'] = self.cache['a2'].T @ dz3 / batch_size
+        grads['b3'] = np.mean(dz3, axis=0, keepdims=True)
+
+        da2 = dz3 @ self.W3.T
+        dz2 = da2 * self.relu_derivative(self.cache['z2'])
+        grads['W2'] = self.cache['a1'].T @ dz2 / batch_size
+        grads['b2'] = np.mean(dz2, axis=0, keepdims=True)
+
+        da1 = dz2 @ self.W2.T
+        dz1 = da1 * self.relu_derivative(self.cache['z1'])
+        grads['W1'] = self.cache['X'].T @ dz1 / batch_size
+        grads['b1'] = np.mean(dz1, axis=0, keepdims=True)
+
+        return grads
+
+    def cross_entropy_loss(self, y_pred, y_true):
+        y_pred = np.clip(y_pred, 1e-15, 1 - 1e-15)
+        return -np.mean(np.sum(y_true * np.log(y_pred), axis=1))
+
+    def get_params(self):
+        return [self.W1, self.b1, self.W2, self.b2, self.W3, self.b3]
+
+    def set_params(self, params):
+        self.W1, self.b1, self.W2, self.b2, self.W3, self.b3 = params
+
+    def copy_params(self):
+        return [p.copy() for p in self.get_params()]
+
+
+# ==============================================================================
+# Optimizer Implementations
+# ==============================================================================
+
+class Optimizer:
+    def __init__(self, learning_rate):
+        self.lr = learning_rate
+
+    def step(self, model, grads):
+        raise NotImplementedError
+
+    def reset(self):
+        pass
+
+    def get_name(self):
+        return self.__class__.__name__
+
+
+class SGD(Optimizer):
+    def step(self, model, grads):
+        param_names = ['W1', 'b1', 'W2', 'b2', 'W3', 'b3']
+        params = model.get_params()
+        for i, name in enumerate(param_names):
+            params[i] = params[i] - self.lr * grads[name]
+        model.set_params(params)
+
+
+class SGDMomentum(Optimizer):
+    def __init__(self, learning_rate=0.01, momentum=0.9):
+        super().__init__(learning_rate)
+        self.beta = momentum
+        self.velocity = None
+
+    def step(self, model, grads):
+        param_names = ['W1', 'b1', 'W2', 'b2', 'W3', 'b3']
+        params = model.get_params()
+
+        if self.velocity is None:
+            self.velocity = {n: np.zeros_like(grads[n]) for n in param_names}
+
+        for i, name in enumerate(param_names):
+            self.velocity[name] = self.beta * self.velocity[name] + grads[name]
+            params[i] = params[i] - self.lr * self.velocity[name]
+        model.set_params(params)
+
+    def reset(self):
+        self.velocity = None
+
+    def get_name(self):
+        return f"SGD+Momentum(b={self.beta})"
+
+
+class RMSprop(Optimizer):
+    def __init__(self, learning_rate=0.001, rho=0.99, epsilon=1e-8):
+        super().__init__(learning_rate)
+        self.rho = rho
+        self.epsilon = epsilon
+        self.cache = None
+
+    def step(self, model, grads):
+        param_names = ['W1', 'b1', 'W2', 'b2', 'W3', 'b3']
+        params = model.get_params()
+
+        if self.cache is None:
+            self.cache = {n: np.zeros_like(grads[n]) for n in param_names}
+
+        for i, name in enumerate(param_names):
+            self.cache[name] = (self.rho * self.cache[name] +
+                               (1 - self.rho) * grads[name]**2)
+            params[i] = params[i] - (self.lr * grads[name] /
+                                     (np.sqrt(self.cache[name]) + self.epsilon))
+        model.set_params(params)
+
+    def reset(self):
+        self.cache = None
+
+    def get_name(self):
+        return f"RMSprop(rho={self.rho})"
+
+
+class Adam(Optimizer):
+    def __init__(self, learning_rate=0.001, beta1=0.9, beta2=0.999,
+                 epsilon=1e-8):
+        super().__init__(learning_rate)
+        self.beta1, self.beta2, self.epsilon = beta1, beta2, epsilon
+        self.m, self.v, self.t = None, None, 0
+
+    def step(self, model, grads):
+        param_names = ['W1', 'b1', 'W2', 'b2', 'W3', 'b3']
+        params = model.get_params()
+
+        if self.m is None:
+            self.m = {n: np.zeros_like(grads[n]) for n in param_names}
+            self.v = {n: np.zeros_like(grads[n]) for n in param_names}
+
+        self.t += 1
+
+        for i, name in enumerate(param_names):
+            self.m[name] = self.beta1 * self.m[name] + (1-self.beta1) * grads[name]
+            self.v[name] = self.beta2 * self.v[name] + (1-self.beta2) * grads[name]**2
+            m_hat = self.m[name] / (1 - self.beta1**self.t)
+            v_hat = self.v[name] / (1 - self.beta2**self.t)
+            params[i] = params[i] - self.lr * m_hat / (np.sqrt(v_hat) + self.epsilon)
+        model.set_params(params)
+
+    def reset(self):
+        self.m, self.v, self.t = None, None, 0
+
+    def get_name(self):
+        return f"Adam(b1={self.beta1},b2={self.beta2})"
+
+
+# ==============================================================================
+# Training Utilities
+# ==============================================================================
+
+def load_mnist():
+    """Load MNIST with proper train/val/test split (80%/10%/10%)."""
+    from sklearn.datasets import fetch_openml
+    from sklearn.model_selection import train_test_split
+
+    print("Loading MNIST...")
+    mnist = fetch_openml('mnist_784', version=1, as_frame=False)
+    X, y = mnist.data / 255.0, mnist.target.astype(int)
+
+    y_onehot = np.zeros((len(y), 10))
+    y_onehot[np.arange(len(y)), y] = 1
+
+    # First split: separate test set (10%)
+    X_temp, X_test, y_temp, y_test = train_test_split(
+        X, y_onehot, test_size=0.1, random_state=42, stratify=y)
+    # Second split: separate validation from training
+    X_train, X_val, y_train, y_val = train_test_split(
+        X_temp, y_temp, test_size=0.1111, random_state=42,
+        stratify=np.argmax(y_temp, axis=1))
+
+    return X_train, X_val, X_test, y_train, y_val, y_test
+
+
+def compute_accuracy(model, X, y):
+    y_pred = model.forward(X)
+    return np.mean(np.argmax(y_pred, axis=1) == np.argmax(y, axis=1))
+
+
+def create_batches(X, y, batch_size):
+    indices = np.random.permutation(len(X))
+    for start in range(0, len(X), batch_size):
+        idx = indices[start:start + batch_size]
+        yield X[idx], y[idx]
+
+
+def train(model, optimizer, X_train, y_train, X_val, y_val,
+          epochs=20, batch_size=128, verbose=True):
+    """Train using validation set for monitoring (NOT test set)."""
+    history = {'train_loss': [], 'train_acc': [],
+               'val_loss': [], 'val_acc': [], 'epoch_times': []}
+
+    for epoch in range(epochs):
+        t0 = time.time()
+        losses = []
+
+        for X_batch, y_batch in create_batches(X_train, y_train, batch_size):
+            y_pred = model.forward(X_batch)
+            losses.append(model.cross_entropy_loss(y_pred, y_batch))
+            grads = model.backward(y_batch)
+            optimizer.step(model, grads)
+
+        epoch_time = time.time() - t0
+        train_loss, train_acc = np.mean(losses), compute_accuracy(model, X_train, y_train)
+        val_pred = model.forward(X_val)
+        val_loss = model.cross_entropy_loss(val_pred, y_val)
+        val_acc = compute_accuracy(model, X_val, y_val)
+
+        history['train_loss'].append(train_loss)
+        history['train_acc'].append(train_acc)
+        history['val_loss'].append(val_loss)
+        history['val_acc'].append(val_acc)
+        history['epoch_times'].append(epoch_time)
+
+        if verbose:
+            print(f"Epoch {epoch+1:2d} | Loss: {train_loss:.4f} | "
+                  f"Train: {train_acc:.4f} | Val: {val_acc:.4f}")
+
+    return history
+
+
+# ==============================================================================
+# Main Experiment
+# ==============================================================================
+
+def run_showdown():
+    """Compare optimizers using proper train/val/test methodology."""
+    X_train, X_val, X_test, y_train, y_val, y_test = load_mnist()
+
+    optimizers = [
+        SGD(learning_rate=0.1),
+        SGDMomentum(learning_rate=0.01, momentum=0.9),
+        RMSprop(learning_rate=0.001),
+        Adam(learning_rate=0.001),
+    ]
+
+    base_model = MLP(seed=42)
+    initial_params = base_model.copy_params()
+    results = {}
+    models = {}
+
+    for opt in optimizers:
+        print(f"\n{'='*50}\n{opt.get_name()}\n{'='*50}")
+        model = MLP(seed=42)
+        model.set_params([p.copy() for p in initial_params])
+        opt.reset()
+        # Train using VALIDATION set for monitoring
+        results[opt.get_name()] = train(model, opt, X_train, y_train,
+                                         X_val, y_val, epochs=20)
+        models[opt.get_name()] = model
+
+    # Final test evaluation (done only once!)
+    print(f"\n{'='*50}\nFINAL TEST EVALUATION\n{'='*50}")
+    for name, model in models.items():
+        test_acc = compute_accuracy(model, X_test, y_test)
+        results[name]['final_test_acc'] = test_acc
+        print(f"{name.split('(')[0]:<20} Test: {test_acc*100:.2f}%")
+
+    # Plot results (using validation accuracy, not test)
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4))
+    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728']
+
+    for (name, hist), color in zip(results.items(), colors):
+        axes[0].plot(hist['train_loss'], label=name.split('(')[0], color=color)
+        axes[1].plot([a*100 for a in hist['val_acc']], label=name.split('(')[0],
+                    color=color)
+
+    axes[0].set_xlabel('Epoch'); axes[0].set_ylabel('Loss')
+    axes[0].set_title('Training Loss'); axes[0].legend(); axes[0].set_yscale('log')
+    axes[1].set_xlabel('Epoch'); axes[1].set_ylabel('Accuracy (%)')
+    axes[1].set_title('Validation Accuracy'); axes[1].legend()
+    axes[1].axhline(y=95, color='gray', linestyle='--', alpha=0.5)
+
+    plt.tight_layout()
+    plt.savefig('optimizer_showdown.png', dpi=150)
+    plt.show()
+
+    return results
+
+
+if __name__ == "__main__":
+    results = run_showdown()
+\end{pythoncode}
+
+%------------------------------------------------------------------------------
+\section{Summary}
+\label{sec:capstone-summary}
+
+In this capstone project, you:
+
+\begin{itemize}
+    \item \textbf{Implemented four optimizers from scratch}: SGD, Momentum, RMSprop, and Adam. You now understand what happens inside these algorithms, not just how to call them.
+
+    \item \textbf{Built a complete training pipeline}: Forward pass, backward pass, mini-batch training, and metric tracking. These components appear in every deep learning project.
+
+    \item \textbf{Used proper evaluation methodology}: Train/validation/test splits ensure unbiased comparisons. The validation set guides optimizer selection during training; the test set provides a single, final estimate of generalization performance.
+
+    \item \textbf{Conducted systematic experiments}: Fair comparison requires controlling for random initialization, data ordering, and hyperparameters.
+
+    \item \textbf{Analyzed results quantitatively}: Loss curves, accuracy trajectories, and learning rate sensitivity reveal optimizer characteristics that matter in practice.
+
+    \item \textbf{Developed practical intuition}: Adam is the safe default; SGD+Momentum may squeeze out extra accuracy with tuning; RMSprop excels for recurrent networks.
+\end{itemize}
+
+\begin{keyconcept}
+\textbf{What You Can Now Do:}
+\begin{itemize}
+    \item Choose the right optimizer for a new problem
+    \item Debug training issues by understanding optimizer internals
+    \item Implement custom optimizers when needed
+    \item Run fair comparisons for research or hyperparameter tuning
+\end{itemize}
+\end{keyconcept}
+
+The optimizers you've implemented here form the foundation of modern deep learning training. Variants of these algorithms---particularly Adam and AdamW---are used in many state-of-the-art systems. The math scales from MNIST to trillion-parameter models; while production systems often include additional engineering optimizations, the core principles remain the same.
+
+\end{document}

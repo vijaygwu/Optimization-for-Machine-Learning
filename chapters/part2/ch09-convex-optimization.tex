@@ -1,0 +1,1025 @@
+%==============================================================================
+%  CHAPTER 9: Convex Optimization
+%  Part II: Optimization Theory
+%==============================================================================
+\documentclass[../../main.tex]{subfiles}
+
+\begin{document}
+
+\chapter{Convex Optimization}
+\label{ch:convex-optimization}
+
+Why can we reliably train a 175-billion parameter neural network, but struggle to solve a large-scale traveling salesman problem? The answer lies in one word: convexity\index{convex optimization|textbf}. When your optimization landscape has a single valley, you're guaranteed to find the bottom.
+
+\begin{whycare}
+Convexity is the dividing line between problems we can solve efficiently and problems that are computationally intractable. Understanding when you have convexity---and how to exploit it---is fundamental to choosing the right approach for any ML problem.
+\end{whycare}
+
+\begin{keyconcept}
+Convex optimization provides the theoretical foundation for understanding when machine learning problems have unique, efficiently computable solutions. When both the objective function and constraint set are convex, every local minimum\index{local minimum} is a global minimum\index{global minimum}---a property that makes optimization tractable and provides strong theoretical guarantees essential for designing reliable learning algorithms.
+\end{keyconcept}
+
+\begin{realworld}
+\textbf{Why This Matters:} Convexity guarantees you find the global optimum---no local minima traps.
+
+\textbf{Real Example:} Logistic regression and SVMs are convex, guaranteeing the best possible linear classifier.
+
+\textbf{Scale:} Convex solvers process millions of constraints for airline scheduling and power grid optimization.
+\end{realworld}
+
+\begin{keyconcept}
+\textbf{Why This Matters in Modern ML:}
+Although deep learning loss landscapes are non-convex, convexity remains essential. Regularization terms (L1, L2) are convex and have well-understood effects. Many subproblems within training are convex---for instance, optimizing the last layer with fixed features. Convex analysis explains why SGD often finds good solutions: near local minima, the loss surface is approximately convex. Understanding convexity helps diagnose when optimization struggles and guides the design of better algorithms.
+\end{keyconcept}
+
+\begin{prerequisites}
+\textbf{Before reading this chapter, you should be comfortable with:}
+\begin{itemize}
+    \item Optimization basics: gradients, critical points, Hessians (see Book~1, Chapter~8)
+    \item Linear algebra: matrix positive definiteness (see Book~1, Chapter~1)
+    \item Multivariable calculus (see Book~1, Chapter~5)
+\end{itemize}
+\textbf{Review if needed:} Book~1, Chapter~8 for convexity, Book~1, Chapter~5 for Hessians
+\end{prerequisites}
+
+%------------------------------------------------------------------------------
+\section{Introduction}
+\label{sec:convex-intro}
+
+Optimization lies at the heart of machine learning: training a model means finding parameters that minimize a loss function. But not all optimization problems are created equal. Some can be solved efficiently with guarantees of finding the best solution, while others are computationally intractable or riddled with suboptimal local minima.
+
+The distinction often comes down to \textbf{convexity}. Convex optimization problems possess a remarkable property: any local minimum is also a global minimum. This seemingly simple statement has profound implications for algorithm design, convergence analysis, and practical computation.
+
+\begin{intuition}
+Think of a convex function as a bowl-shaped surface. No matter where you place a ball on this surface, it will roll down to the same lowest point. In contrast, a non-convex function resembles a mountain range with many valleys---a ball might settle in any number of local valleys, none of which may be the deepest point overall.
+\end{intuition}
+
+In this chapter, we develop the theory of convex sets and functions, establish conditions for recognizing convexity, and explore the powerful duality framework that enables both theoretical insights and practical algorithms. We conclude by examining how these concepts apply to machine learning, particularly in the formulation of Support Vector Machines and the design of loss functions.
+
+%------------------------------------------------------------------------------
+\section{Convex Sets}
+\label{sec:convex-sets}
+
+Before studying convex functions, we must understand convex sets---the domains on which these functions are defined.
+
+\begin{definition}{Convex Set}{convex-set}
+A set $C \subseteq \R^n$ is \textbf{convex}\index{convex set|textbf} if for any two points $\vect{x}, \vect{y} \in C$ and any $\lambda \in [0, 1]$, the point
+\[
+    \lambda \vect{x} + (1 - \lambda) \vect{y}
+\]
+also belongs to $C$. In other words, the line segment connecting any two points in the set lies entirely within the set.
+\end{definition}
+
+\begin{intuition}
+A convex set has no ``dents'' or ``holes.'' If you can see any point in the set from any other point without your line of sight leaving the set, it is convex. Circles, ellipses, and polytopes are convex. Shapes like donuts (with holes) or crescents (with indentations) are not convex.
+\end{intuition}
+
+\subsection{Examples of Convex Sets}
+
+Many important sets in machine learning are convex:
+
+\begin{enumerate}
+    \item \textbf{Hyperplanes}\index{hyperplane}: $\{\vect{x} \in \R^n : \vect{a}\trans \vect{x} = b\}$ for any $\vect{a} \neq \vect{0}$
+
+    \item \textbf{Halfspaces}\index{halfspace}: $\{\vect{x} \in \R^n : \vect{a}\trans \vect{x} \leq b\}$
+
+    \item \textbf{Euclidean balls}\index{Euclidean ball}: $\{\vect{x} \in \R^n : \norm{\vect{x} - \vect{c}} \leq r\}$
+
+    \item \textbf{Ellipsoids}\index{ellipsoid}: $\{\vect{x} \in \R^n : (\vect{x} - \vect{c})\trans \mat{P}\inv (\vect{x} - \vect{c}) \leq 1\}$ where $\mat{P}$ is positive definite
+
+    \item \textbf{Polyhedra}\index{polyhedron}: $\{\vect{x} \in \R^n : \mat{A}\vect{x} \leq \vect{b}\}$ (intersection of finitely many halfspaces)
+
+    \item \textbf{Positive semidefinite cone}\index{positive semidefinite!cone}: $\{\mat{X} \in \R^{n \times n} : \mat{X} = \mat{X}\trans,\, \mat{X} \succeq 0\}$
+\end{enumerate}
+
+\begin{theorem}{Intersection of Convex Sets}{intersection-convex}
+The intersection of any collection (finite or infinite) of convex sets is convex.
+\end{theorem}
+
+\begin{proof}
+Let $\{C_i\}_{i \in I}$ be a collection of convex sets, and let $C = \bigcap_{i \in I} C_i$. For any $\vect{x}, \vect{y} \in C$ and $\lambda \in [0,1]$, we have $\vect{x}, \vect{y} \in C_i$ for all $i$. Since each $C_i$ is convex, $\lambda \vect{x} + (1-\lambda)\vect{y} \in C_i$ for all $i$. Therefore, $\lambda \vect{x} + (1-\lambda)\vect{y} \in C$.
+\end{proof}
+
+This property is particularly useful: the feasible region\index{feasible region} of many optimization problems is defined as the intersection of constraint sets, each of which may be convex.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.9\textwidth]{../../images/diagrams/ch09/fig-convex-sets.png}
+\caption{Convex vs.\ non-convex sets. A set is convex if every line segment between two points in the set lies entirely within the set. Left: convex shapes pass this test. Right: non-convex shapes fail---the line segment exits the set.}
+\label{fig:ch09-convex-sets}
+\end{figure}
+
+\subsection{Convex Combinations and Convex Hulls}
+
+\begin{definition}{Convex Combination}{convex-combination}
+A \textbf{convex combination}\index{convex combination|textbf} of points $\vect{x}_1, \ldots, \vect{x}_k$ is any point of the form
+\[
+    \sum_{i=1}^{k} \lambda_i \vect{x}_i, \quad \text{where } \lambda_i \geq 0 \text{ and } \sum_{i=1}^{k} \lambda_i = 1.
+\]
+\end{definition}
+
+\begin{definition}{Convex Hull}{convex-hull}
+The \textbf{convex hull}\index{convex hull|textbf} of a set $S$, denoted $\text{conv}(S)$, is the set of all convex combinations of points in $S$. It is the smallest convex set containing $S$.
+\end{definition}
+
+\begin{example}{Convex Hull of Three Points}{convex-hull-triangle}
+The convex hull of three non-collinear points in $\R^2$ is a triangle. Every point inside or on the boundary of this triangle can be written as a convex combination of the three vertices:
+\[
+    \vect{p} = \lambda_1 \vect{x}_1 + \lambda_2 \vect{x}_2 + \lambda_3 \vect{x}_3, \quad \lambda_1, \lambda_2, \lambda_3 \geq 0, \quad \lambda_1 + \lambda_2 + \lambda_3 = 1.
+\]
+The coefficients $(\lambda_1, \lambda_2, \lambda_3)$ are called \textbf{barycentric coordinates}.
+\end{example}
+
+%------------------------------------------------------------------------------
+\section{Convex Functions}
+\label{sec:convex-functions}
+
+\begin{definition}{Convex Function}{convex-function}
+A function $f: \R^n \to \R$ is \textbf{convex}\index{convex function!definition|textbf} if its domain $\text{dom}(f)$ is a convex set and for all $\vect{x}, \vect{y} \in \text{dom}(f)$ and $\lambda \in [0, 1]$:
+\[
+    f(\lambda \vect{x} + (1 - \lambda) \vect{y}) \leq \lambda f(\vect{x}) + (1 - \lambda) f(\vect{y}).
+\]
+If the inequality is strict for $\vect{x} \neq \vect{y}$ and $\lambda \in (0, 1)$, the function is \textbf{strictly convex}\index{convex function!strictly convex}.
+\end{definition}
+
+\begin{intuition}
+The defining inequality states that the line segment connecting any two points on the graph of $f$ lies above (or on) the graph. Geometrically, a convex function ``curves upward.'' The epigraph\index{epigraph}---the region above the graph---forms a convex set.
+\end{intuition}
+
+\begin{definition}{Concave Function}{concave-function}
+A function $f$ is \textbf{concave}\index{concave function|textbf} if $-f$ is convex. Equivalently:
+\[
+    f(\lambda \vect{x} + (1 - \lambda) \vect{y}) \geq \lambda f(\vect{x}) + (1 - \lambda) f(\vect{y}).
+\]
+\end{definition}
+
+\subsection{Examples of Convex Functions}
+
+\begin{enumerate}
+    \item \textbf{Linear functions}: $f(\vect{x}) = \vect{a}\trans \vect{x} + b$ (both convex and concave)
+
+    \item \textbf{Affine functions}: Any function $f(\vect{x}) = \mat{A}\vect{x} + \vect{b}$
+
+    \item \textbf{Quadratic functions}: $f(\vect{x}) = \vect{x}\trans \mat{Q} \vect{x}$ is convex if and only if $\mat{Q} \succeq 0$
+
+    \item \textbf{Norms}\index{norm!convexity}: Any norm $\norm{\vect{x}}$ is convex (follows from triangle inequality)
+
+    \item \textbf{Exponential}: $f(x) = e^{ax}$ for any $a \in \R$
+
+    \item \textbf{Negative logarithm}: $f(x) = -\log x$ on $x > 0$
+
+    \item \textbf{Max function}\index{convex function!max function}: $f(\vect{x}) = \max_i x_i$
+
+    \item \textbf{Log-sum-exp}\index{log-sum-exp}: $f(\vect{x}) = \log\left(\sum_{i=1}^n e^{x_i}\right)$ (a smooth approximation to the max function)
+\end{enumerate}
+
+\begin{principle}
+Many loss functions in machine learning are designed to be convex, ensuring that optimization algorithms can find global optima. Mean squared error, cross-entropy loss, and hinge loss are all convex in the model parameters for linear models.
+\end{principle}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.9\textwidth]{../../images/diagrams/ch09/fig-convex-functions.png}
+\caption{Convex vs.\ non-convex functions. For a convex function, the line segment connecting any two points on the graph lies above (or on) the function. The epigraph---the region above the graph---forms a convex set. Non-convex functions violate this property.}
+\label{fig:ch09-convex-functions}
+\end{figure}
+
+\subsection{Operations Preserving Convexity}
+
+Convexity is preserved under several operations, making it easy to build complex convex functions from simpler ones.
+
+\begin{theorem}{Convexity-Preserving Operations}{convex-preserving}
+Let $f_1, \ldots, f_k$ be convex functions. Then:
+\begin{enumerate}
+    \item \textbf{Non-negative weighted sum}: $\sum_{i=1}^k \alpha_i f_i$ is convex for $\alpha_i \geq 0$
+    \item \textbf{Pointwise maximum}: $f(\vect{x}) = \max_i f_i(\vect{x})$ is convex
+    \item \textbf{Composition with affine}: $g(\vect{x}) = f(\mat{A}\vect{x} + \vect{b})$ is convex
+    \item \textbf{Infimum}: If $f(\vect{x}, \vect{y})$ is convex in $(\vect{x}, \vect{y})$ and $C$ is convex, then $g(\vect{x}) = \inf_{\vect{y} \in C} f(\vect{x}, \vect{y})$ is convex in $\vect{x}$
+\end{enumerate}
+\end{theorem}
+
+\begin{example}{Building Convex Functions}{building-convex}
+The hinge loss $\max(0, 1 - y \cdot f(\vect{x}))$ used in SVMs is convex because:
+\begin{itemize}
+    \item The function $g(z) = 1 - z$ is affine (hence convex)
+    \item The function $h(z) = \max(0, z)$ is convex (as the max of two convex functions: $0$ and $z$)
+    \item The composition $h(g(yf)) = \max(0, 1 - yf)$ preserves convexity
+\end{itemize}
+\end{example}
+
+%------------------------------------------------------------------------------
+\section{Conditions for Convexity}
+\label{sec:convexity-conditions}
+
+While the definition of convexity involves checking infinitely many inequalities, there are practical conditions that are easier to verify~\cite{boyd2004convex}.
+
+\subsection{First-Order Condition}
+
+\begin{theorem}{First-Order Condition for Convexity}{first-order-convex}
+Suppose $f$ is differentiable on a convex domain. Then $f$ is convex if and only if for all $\vect{x}, \vect{y}$ in the domain:
+\[
+    f(\vect{y}) \geq f(\vect{x}) + \grad f(\vect{x})\trans (\vect{y} - \vect{x}).
+\]
+\end{theorem}
+
+\begin{intuition}
+This condition says that the tangent hyperplane at any point lies below (or on) the graph of the function. The linear approximation at any point is a global underestimator\index{first-order condition|textbf}. This is why gradient descent works so well for convex functions: moving in the negative gradient direction is guaranteed to make progress toward the minimum.
+\end{intuition}
+
+\begin{important}
+The first-order condition immediately implies that any stationary point (where $\grad f(\vect{x}^*) = \vect{0}$) is a global minimum. Setting $\grad f(\vect{x}^*) = \vect{0}$ in the inequality gives $f(\vect{y}) \geq f(\vect{x}^*)$ for all $\vect{y}$.
+\end{important}
+
+\begin{example}{First-Order Condition Visualized}{ch09-first-order-example}
+For $f(x) = x^2$ at $x=1$: the tangent line is $y = 1 + 2(x-1) = 2x - 1$. At any other point, say $x=2$: tangent gives $2(2)-1 = 3$, while $f(2) = 4 \geq 3$. The tangent always underestimates---this is the geometric meaning of convexity's first-order condition.
+\end{example}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.85\textwidth]{../../images/diagrams/ch09/fig-first-order-condition.png}
+\caption{The first-order condition for convexity. For a convex function, the tangent line (or hyperplane) at any point is a global underestimator---it lies below the function everywhere. This property ensures that gradient descent always makes progress toward the minimum.}
+\label{fig:ch09-first-order-condition}
+\end{figure}
+
+\begin{commonmistakes}
+\begin{itemize}
+    \item \textbf{Mistake:} Assuming neural network loss functions are convex
+
+    \textbf{Why it's wrong:} Neural network losses are highly non-convex due to the nonlinear activation functions and the multiplicative interaction of weights across layers. They have many local minima and saddle points.
+
+    \textbf{Correct understanding:} Convexity applies to simpler models (linear/logistic regression, SVMs). Deep learning succeeds despite non-convexity because SGD finds good (though not globally optimal) solutions, and many local minima have similar loss values.
+\end{itemize}
+\end{commonmistakes}
+
+\subsection{Second-Order Condition}
+
+\begin{theorem}{Second-Order Condition for Convexity}{second-order-convex}
+Suppose $f$ is twice differentiable on an open convex domain. Then $f$ is convex if and only if its Hessian\index{Hessian} matrix $\Hess f(\vect{x})$ is positive semidefinite\index{positive semidefinite} for all $\vect{x}$ in the domain\index{second-order condition|textbf}:
+\[
+    \Hess f(\vect{x}) \succeq 0 \quad \forall \vect{x}.
+\]
+Furthermore, $f$ is strictly convex\index{strictly convex} if $\Hess f(\vect{x}) \succ 0$ for all $\vect{x}$.
+\end{theorem}
+
+\begin{proof}[Sketch]
+By Taylor's theorem, for any $\vect{x}, \vect{y}$ in the domain:
+\[
+    f(\vect{y}) = f(\vect{x}) + \grad f(\vect{x})\trans(\vect{y} - \vect{x}) + \frac{1}{2}(\vect{y} - \vect{x})\trans \Hess f(\vect{z})(\vect{y} - \vect{x})
+\]
+for some $\vect{z}$ on the line segment between $\vect{x}$ and $\vect{y}$. If $\Hess f(\vect{z}) \succeq 0$, then $(\vect{y} - \vect{x})\trans \Hess f(\vect{z})(\vect{y} - \vect{x}) \geq 0$, giving:
+\[
+    f(\vect{y}) \geq f(\vect{x}) + \grad f(\vect{x})\trans(\vect{y} - \vect{x})
+\]
+which is the first-order condition for convexity. The converse requires showing that non-PSD Hessian implies the existence of a direction violating convexity.
+\end{proof}
+
+\begin{example}{Verifying Convexity of Quadratic Functions}{quad-convex}
+Consider $f(\vect{x}) = \frac{1}{2}\vect{x}\trans \mat{Q} \vect{x} + \vect{c}\trans \vect{x} + d$ where $\mat{Q}$ is symmetric. The gradient and Hessian are:
+\[
+    \grad f(\vect{x}) = \mat{Q}\vect{x} + \vect{c}, \quad \Hess f(\vect{x}) = \mat{Q}.
+\]
+The function is convex if and only if $\mat{Q} \succeq 0$ (positive semidefinite). If all eigenvalues of $\mat{Q}$ are positive ($\mat{Q} \succ 0$), the function is strictly convex with a unique minimum at $\vect{x}^* = -\mat{Q}\inv \vect{c}$.
+\end{example}
+
+\subsection{Strong Convexity}
+
+Plain convexity guarantees no local minima traps, but says nothing about convergence speed. Strong convexity quantifies the ``curvature'' that drives fast convergence---the stronger the convexity (larger $\mu$), the faster we reach the minimum.
+
+\begin{definition}{Strong Convexity}{strong-convex}
+A function $f$ is \textbf{$\mu$-strongly convex}\index{strong convexity|textbf} for $\mu > 0$ if for all $\vect{x}, \vect{y}$ in its domain:
+\[
+    f(\vect{y}) \geq f(\vect{x}) + \grad f(\vect{x})\trans (\vect{y} - \vect{x}) + \frac{\mu}{2} \norm{\vect{y} - \vect{x}}^2.
+\]
+Equivalently, $f(\vect{x}) - \frac{\mu}{2}\norm{\vect{x}}^2$ is convex.
+\end{definition}
+
+\begin{keyconcept}
+Strong convexity is a quantitative measure of how ``curved'' a function is. It guarantees:
+\begin{enumerate}
+    \item A unique global minimum exists
+    \item Gradient descent converges linearly (exponentially fast)
+    \item The condition number\index{condition number} $L/\mu$ determines convergence rate, where $L$ is the Lipschitz constant\index{Lipschitz constant} of the gradient
+\end{enumerate}
+\end{keyconcept}
+
+For twice-differentiable functions, $\mu$-strong convexity is equivalent to $\Hess f(\vect{x}) \succeq \mu \mat{I}$ for all $\vect{x}$.
+
+\begin{aha}
+If a function curves upward everywhere (positive semidefinite Hessian), then any local minimum IS the global minimum. This single property---convexity---is why some optimization problems are easy and others are NP-hard.
+\end{aha}
+
+\begin{checkpoint}
+How do you prove a function is convex? List three equivalent conditions.
+\end{checkpoint}
+
+%------------------------------------------------------------------------------
+\section{The Convex Optimization Problem}
+\label{sec:convex-opt-problem}
+
+\begin{definition}{Convex Optimization Problem}{convex-opt}
+A \textbf{convex optimization problem} has the standard form:
+\begin{align*}
+    \min_{\vect{x}} \quad & f_0(\vect{x}) \\
+    \text{subject to} \quad & f_i(\vect{x}) \leq 0, \quad i = 1, \ldots, m \\
+    & \vect{a}_j\trans \vect{x} = b_j, \quad j = 1, \ldots, p
+\end{align*}
+where $f_0, f_1, \ldots, f_m$ are convex functions and the equality constraints are affine.
+\end{definition}
+
+\begin{theorem}{Fundamental Property of Convex Optimization}{local-global}
+For a convex optimization problem, every local minimum is a global minimum\index{global minimum!uniqueness}. If the objective is strictly convex, the global minimum (if it exists) is unique.
+\end{theorem}
+
+\begin{proof}
+Suppose $\vect{x}^*$ is a local minimum but not global. Then there exists $\vect{y}$ with $f_0(\vect{y}) < f_0(\vect{x}^*)$. By convexity:
+\[
+    f_0(\lambda \vect{y} + (1-\lambda)\vect{x}^*) \leq \lambda f_0(\vect{y}) + (1-\lambda)f_0(\vect{x}^*) < f_0(\vect{x}^*)
+\]
+for any $\lambda \in (0,1)$. The point $\lambda \vect{y} + (1-\lambda)\vect{x}^*$ is feasible (by convexity of the feasible set) and arbitrarily close to $\vect{x}^*$ for small $\lambda$, contradicting local optimality.
+\end{proof}
+
+\subsection{Special Cases}
+
+\begin{definition}{Linear Programming (LP)}{linear-programming}
+A \textbf{linear program}\index{linear programming|textbf} has linear objective and constraints:
+\begin{align*}
+    \min_{\vect{x}} \quad & \vect{c}\trans \vect{x} \\
+    \text{subject to} \quad & \mat{A}\vect{x} \leq \vect{b}
+\end{align*}
+The feasible region is a polyhedron, and the optimum (if finite) occurs at a vertex.
+\end{definition}
+
+\begin{definition}{Quadratic Programming (QP)}{quadratic-programming}
+A \textbf{quadratic program}\index{quadratic programming|textbf} has a quadratic objective with linear constraints:
+\begin{align*}
+    \min_{\vect{x}} \quad & \frac{1}{2}\vect{x}\trans \mat{Q} \vect{x} + \vect{c}\trans \vect{x} \\
+    \text{subject to} \quad & \mat{A}\vect{x} \leq \vect{b}
+\end{align*}
+where $\mat{Q} \succeq 0$ ensures convexity. This is the form of the SVM optimization problem.
+\end{definition}
+
+%------------------------------------------------------------------------------
+\section{Lagrangian Duality}
+\label{sec:lagrangian-duality}
+
+Duality is one of the most powerful concepts in optimization. It provides:
+\begin{itemize}
+    \item Lower bounds on the optimal value
+    \item Alternative formulations that may be easier to solve
+    \item Theoretical insights into the structure of solutions
+    \item The foundation for important algorithms
+\end{itemize}
+
+\subsection{The Lagrangian}
+
+\begin{definition}{Lagrangian Function}{lagrangian}
+For the optimization problem
+\begin{align*}
+    \min_{\vect{x}} \quad & f_0(\vect{x}) \\
+    \text{subject to} \quad & f_i(\vect{x}) \leq 0, \quad i = 1, \ldots, m \\
+    & h_j(\vect{x}) = 0, \quad j = 1, \ldots, p
+\end{align*}
+the \textbf{Lagrangian}\index{Lagrangian|textbf} is:
+\[
+    L(\vect{x}, \vect{\lambda}, \vect{\nu}) = f_0(\vect{x}) + \sum_{i=1}^m \lambda_i f_i(\vect{x}) + \sum_{j=1}^p \nu_j h_j(\vect{x})
+\]
+where $\vect{\lambda} \in \R^m_+$ (non-negative) and $\vect{\nu} \in \R^p$ are \textbf{Lagrange multipliers}\index{Lagrange multiplier|textbf} or \textbf{dual variables}\index{dual variable}.
+\end{definition}
+
+\begin{intuition}
+The Lagrangian relaxes the hard constraints by adding penalty terms. The multiplier $\lambda_i$ represents the ``price'' of violating constraint $i$. If $\lambda_i$ is large, the optimization will work hard to satisfy $f_i(\vect{x}) \leq 0$.
+\end{intuition}
+
+\begin{example}{Rectangle Optimization}{ch09-rectangle-dual}
+Maximize the area of a rectangle with perimeter 20. Primal: maximize $xy$ subject to $2x + 2y = 20$. The Lagrangian $\mathcal{L}(x,y,\lambda) = xy - \lambda(2x + 2y - 20)$ yields optimal $x^* = y^* = 5$ with area 25. The dual perspective: we're trading off area against perimeter constraint, with $\lambda$ as the ``price'' of perimeter.
+\end{example}
+
+\subsection{The Dual Function}
+
+\begin{definition}{Lagrange Dual Function}{dual-function}
+The \textbf{Lagrange dual function}\index{dual function|textbf} is obtained by minimizing the Lagrangian over $\vect{x}$:
+\[
+    g(\vect{\lambda}, \vect{\nu}) = \inf_{\vect{x}} L(\vect{x}, \vect{\lambda}, \vect{\nu}).
+\]
+\end{definition}
+
+\begin{theorem}{Lower Bound Property}{weak-duality}
+For any $\vect{\lambda} \geq \vect{0}$ and any $\vect{\nu}$, the dual function provides a lower bound on the optimal value $p^*$:
+\[
+    g(\vect{\lambda}, \vect{\nu}) \leq p^*.
+\]
+\end{theorem}
+
+\begin{proof}
+Let $\vect{x}$ be any feasible point (so $f_i(\vect{x}) \leq 0$ and $h_j(\vect{x}) = 0$). Since $\lambda_i \geq 0$ and $f_i(\vect{x}) \leq 0$:
+\[
+    L(\vect{x}, \vect{\lambda}, \vect{\nu}) = f_0(\vect{x}) + \sum_i \lambda_i f_i(\vect{x}) + \sum_j \nu_j h_j(\vect{x}) \leq f_0(\vect{x}).
+\]
+Taking the infimum over all $\vect{x}$ (including non-feasible points) can only decrease this:
+\[
+    g(\vect{\lambda}, \vect{\nu}) = \inf_{\vect{x}} L(\vect{x}, \vect{\lambda}, \vect{\nu}) \leq f_0(\vect{x}).
+\]
+Since this holds for all feasible $\vect{x}$, it holds for the optimal $\vect{x}^*$, giving $g(\vect{\lambda}, \vect{\nu}) \leq p^*$.
+\end{proof}
+
+\subsection{The Dual Problem}
+
+\begin{definition}{Lagrange Dual Problem}{dual-problem}
+The \textbf{Lagrange dual problem}\index{dual problem|textbf}\index{primal problem|see{dual problem}} is:
+\begin{align*}
+    \max_{\vect{\lambda}, \vect{\nu}} \quad & g(\vect{\lambda}, \vect{\nu}) \\
+    \text{subject to} \quad & \vect{\lambda} \geq \vect{0}
+\end{align*}
+The optimal value $d^*$ is called the \textbf{dual optimal value}.
+\end{definition}
+
+\begin{theorem}{Weak Duality}{weak-duality-theorem}
+\index{weak duality|textbf}For any optimization problem (convex or not):
+\[
+    d^* \leq p^*.
+\]
+The difference $p^* - d^*$ is called the \textbf{duality gap}\index{duality gap}.
+\end{theorem}
+
+\begin{theorem}{Strong Duality}{strong-duality}
+\index{strong duality|textbf}For convex problems satisfying a \textbf{constraint qualification} (such as Slater's condition\index{Slater's condition}: there exists a strictly feasible point $\vect{x}$ with $f_i(\vect{x}) < 0$ for all $i$), strong duality holds:
+\[
+    d^* = p^*.
+\]
+\end{theorem}
+
+\begin{checkpoint}
+What is Slater's condition? When does it guarantee strong duality?
+\end{checkpoint}
+
+\begin{keyconcept}
+Strong duality means we can solve the primal problem by solving the dual instead. This is powerful because:
+\begin{enumerate}
+    \item The dual is always a concave maximization (hence convex minimization of $-g$)
+    \item The dual may have fewer variables or simpler structure
+    \item Dual variables often have meaningful interpretations (e.g., shadow prices in economics)
+\end{enumerate}
+\end{keyconcept}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.9\textwidth]{../../images/diagrams/ch09/fig-lagrangian-duality.png}
+\caption{Lagrangian duality visualized. The primal problem minimizes the objective over the feasible region, while the dual problem maximizes a lower bound. For convex problems satisfying Slater's condition, strong duality holds: the primal and dual optimal values are equal.}
+\label{fig:ch09-lagrangian-duality}
+\end{figure}
+
+%------------------------------------------------------------------------------
+\section{KKT Conditions}
+\label{sec:kkt}
+
+The Karush-Kuhn-Tucker (KKT) conditions\index{KKT conditions|textbf}\index{Karush-Kuhn-Tucker conditions|see{KKT conditions}} generalize the first-order optimality conditions to constrained problems.
+
+\begin{theorem}{KKT Conditions}{kkt-conditions}
+For a convex problem with differentiable objective and constraints, $\vect{x}^*$ is optimal if and only if there exist $\vect{\lambda}^*, \vect{\nu}^*$ satisfying:
+
+\begin{enumerate}
+    \item \textbf{Stationarity}:
+    \[
+        \grad f_0(\vect{x}^*) + \sum_{i=1}^m \lambda_i^* \grad f_i(\vect{x}^*) + \sum_{j=1}^p \nu_j^* \grad h_j(\vect{x}^*) = \vect{0}
+    \]
+
+    \item \textbf{Primal Feasibility}:
+    \[
+        f_i(\vect{x}^*) \leq 0, \quad h_j(\vect{x}^*) = 0
+    \]
+
+    \item \textbf{Dual Feasibility}:
+    \[
+        \lambda_i^* \geq 0
+    \]
+
+    \item \textbf{Complementary Slackness}\index{complementary slackness|textbf}:
+    \[
+        \lambda_i^* f_i(\vect{x}^*) = 0 \quad \text{for all } i
+    \]
+\end{enumerate}
+\end{theorem}
+
+\begin{intuition}
+\textbf{Stationarity} says the gradient of the Lagrangian is zero---balancing the objective gradient against constraint gradients. \textbf{Complementary slackness} says that either a constraint is active\index{active constraint} ($f_i(\vect{x}^*) = 0$) or its multiplier is zero ($\lambda_i^* = 0$). Inactive constraints don't affect the solution.
+\end{intuition}
+
+\begin{checkpoint}
+Write out the KKT conditions. What does complementary slackness mean geometrically?
+\end{checkpoint}
+
+\begin{example}{KKT for a Simple Problem}{kkt-example}
+Consider minimizing $f(x) = x^2$ subject to $x \geq 1$, or equivalently $g(x) = 1 - x \leq 0$.
+
+The Lagrangian is $L(x, \lambda) = x^2 + \lambda(1 - x)$.
+
+KKT conditions:
+\begin{enumerate}
+    \item Stationarity: $2x - \lambda = 0$
+    \item Primal feasibility: $x \geq 1$
+    \item Dual feasibility: $\lambda \geq 0$
+    \item Complementary slackness: $\lambda(1 - x) = 0$
+\end{enumerate}
+
+From complementary slackness, either $\lambda = 0$ or $x = 1$.
+
+If $\lambda = 0$: stationarity gives $x = 0$, violating primal feasibility.
+
+If $x = 1$: stationarity gives $\lambda = 2 > 0$, satisfying dual feasibility.
+
+Therefore $x^* = 1$ with $\lambda^* = 2$.
+\end{example}
+
+%------------------------------------------------------------------------------
+\section{Why Convexity Matters for Machine Learning}
+\label{sec:convex-ml}
+
+Convexity plays a fundamental role in the design and analysis of machine learning algorithms.
+
+\subsection{Guarantees for Optimization}
+
+\begin{principle}
+Convex optimization problems have no spurious local minima. Any algorithm that finds a stationary point has found a global optimum. This eliminates the anxiety of initialization and the need for multiple restarts common in non-convex optimization.
+\end{principle}
+
+\begin{theorem}{Convergence of Gradient Descent for Convex Functions}{gd-convex-convergence}
+For a convex function $f$ with $L$-Lipschitz continuous gradient, gradient descent with step size $\eta = 1/L$ achieves:
+\[
+    f(\vect{x}_T) - f(\vect{x}^*) \leq \frac{L \norm{\vect{x}_0 - \vect{x}^*}^2}{2T}
+\]
+This is $O(1/T)$ convergence. For $\mu$-strongly convex functions:
+\[
+    \norm{\vect{x}_T - \vect{x}^*}^2 \leq \left(1 - \frac{\mu}{L}\right)^T \norm{\vect{x}_0 - \vect{x}^*}^2
+\]
+This is linear (exponential) convergence with rate determined by the condition number $\kappa = L/\mu$.
+\end{theorem}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.85\textwidth]{../../images/diagrams/ch09/fig-gd-convex.png}
+\caption{Gradient descent on a convex quadratic $f(x,y) = 2x^2 + 0.5y^2$. The elliptical contours reflect the different curvatures along each axis (condition number $\kappa = 4$). From any starting point, gradient descent converges to the unique global minimum at the origin. The trajectory shows 15 iterations with learning rate $\eta = 0.2$.}
+\label{fig:ch09-gd-convex}
+\end{figure}
+
+\subsection{Convexity in Classical Machine Learning}
+
+Many classical ML algorithms are formulated as convex optimization:
+
+\begin{enumerate}
+    \item \textbf{Linear Regression (MSE)}: $\min_{\vect{w}} \norm{\mat{X}\vect{w} - \vect{y}}^2$ is convex (quadratic in $\vect{w}$)
+
+    \item \textbf{Logistic Regression}: $\min_{\vect{w}} \sum_i \log(1 + e^{-y_i \vect{w}\trans \vect{x}_i})$ is convex
+
+    \item \textbf{Support Vector Machines}: A convex quadratic program
+
+    \item \textbf{Regularized Models}: Adding $\ell_1$ or $\ell_2$ penalties preserves convexity
+\end{enumerate}
+
+\begin{important}
+\textbf{Deep Learning is Non-Convex}: Neural network loss functions are highly non-convex due to the nonlinear activations and compositional structure. However, understanding convex optimization remains essential because:
+\begin{itemize}
+    \item Local approximations are convex (Taylor expansion)
+    \item Many components (individual losses) are convex
+    \item Convex analysis provides intuition for algorithm design
+    \item Some architectures have hidden convex structure
+\end{itemize}
+\end{important}
+
+%------------------------------------------------------------------------------
+\section{Support Vector Machines: A Convex Optimization Example}
+\label{sec:svm}
+
+Support Vector Machines\index{support vector machine|textbf}\index{SVM|see{support vector machine}} (SVMs), introduced by Cortes \& Vapnik (1995), provide a beautiful example of how convex optimization theory applies to machine learning.
+
+\subsection{The Hard-Margin SVM}
+
+Given training data $\{(\vect{x}_i, y_i)\}_{i=1}^n$ with $y_i \in \{-1, +1\}$, we seek a hyperplane $\vect{w}\trans \vect{x} + b = 0$ that separates the classes with maximum margin.
+
+\begin{definition}{Hard-Margin SVM Primal Problem}{svm-primal}
+\begin{align*}
+    \min_{\vect{w}, b} \quad & \frac{1}{2}\norm{\vect{w}}^2 \\
+    \text{subject to} \quad & y_i(\vect{w}\trans \vect{x}_i + b) \geq 1, \quad i = 1, \ldots, n
+\end{align*}
+\end{definition}
+
+\begin{intuition}
+The margin is $2/\norm{\vect{w}}$, so maximizing the margin is equivalent to minimizing $\norm{\vect{w}}^2$. The constraints ensure all points are correctly classified with a functional margin of at least 1.
+\end{intuition}
+
+This is a convex quadratic program: the objective is strictly convex (positive definite quadratic) and the constraints are linear.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.9\textwidth]{../../images/diagrams/ch09/fig-svm-boundary.png}
+\caption{Support Vector Machine decision boundary. The SVM finds the hyperplane (solid line) that maximizes the margin---the distance to the nearest training points. The margin boundaries (dashed lines) pass through the support vectors, the critical points that determine the optimal separator.}
+\label{fig:ch09-svm-boundary}
+\end{figure}
+
+\subsection{The Dual Problem}
+
+Forming the Lagrangian with multipliers $\alpha_i \geq 0$:
+\[
+    L(\vect{w}, b, \vect{\alpha}) = \frac{1}{2}\norm{\vect{w}}^2 - \sum_{i=1}^n \alpha_i [y_i(\vect{w}\trans \vect{x}_i + b) - 1].
+\]
+
+Setting derivatives to zero:
+\begin{align*}
+    \pd{L}{\vect{w}} = \vect{0} &\implies \vect{w} = \sum_{i=1}^n \alpha_i y_i \vect{x}_i \\
+    \pd{L}{b} = 0 &\implies \sum_{i=1}^n \alpha_i y_i = 0
+\end{align*}
+
+\begin{definition}{SVM Dual Problem}{svm-dual}
+\begin{align*}
+    \max_{\vect{\alpha}} \quad & \sum_{i=1}^n \alpha_i - \frac{1}{2}\sum_{i,j=1}^n \alpha_i \alpha_j y_i y_j \vect{x}_i\trans \vect{x}_j \\
+    \text{subject to} \quad & \alpha_i \geq 0, \quad \sum_{i=1}^n \alpha_i y_i = 0
+\end{align*}
+\end{definition}
+
+\begin{keyconcept}
+The dual formulation reveals key insights:
+\begin{enumerate}
+    \item The solution depends on data only through inner products $\vect{x}_i\trans \vect{x}_j$ (enabling the \textbf{kernel trick})\index{kernel trick}
+    \item By complementary slackness, $\alpha_i > 0$ only when $y_i(\vect{w}\trans \vect{x}_i + b) = 1$---these are the \textbf{support vectors}\index{support vector}
+    \item The optimal hyperplane is determined entirely by support vectors
+\end{enumerate}
+\end{keyconcept}
+
+\subsection{Soft-Margin SVM}
+
+When data is not linearly separable, we introduce slack variables $\xi_i \geq 0$:
+
+\begin{definition}{Soft-Margin SVM}{soft-margin-svm}
+\begin{align*}
+    \min_{\vect{w}, b, \vect{\xi}} \quad & \frac{1}{2}\norm{\vect{w}}^2 + C\sum_{i=1}^n \xi_i \\
+    \text{subject to} \quad & y_i(\vect{w}\trans \vect{x}_i + b) \geq 1 - \xi_i \\
+    & \xi_i \geq 0
+\end{align*}
+\end{definition}
+
+The parameter $C > 0$ controls the trade-off between maximizing margin and minimizing classification errors. This is still a convex QP.
+
+\begin{example}{Hinge Loss Interpretation}{hinge-loss}
+The soft-margin SVM objective can be written as:
+\[
+    \min_{\vect{w}, b} \frac{1}{2}\norm{\vect{w}}^2 + C\sum_{i=1}^n \max(0, 1 - y_i(\vect{w}\trans \vect{x}_i + b))
+\]
+where $\max(0, 1 - y_i f(\vect{x}_i))$ is the \textbf{hinge loss}\index{hinge loss|textbf}\index{loss function!hinge}. This formulation reveals SVM as regularized empirical risk minimization with a convex loss function.
+\end{example}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.9\textwidth]{../../images/diagrams/ch09/fig-hard-soft-margin.png}
+\caption{Hard-margin vs.\ soft-margin SVM. Left: Hard-margin SVM requires linearly separable data and finds the maximum margin hyperplane. Right: Soft-margin SVM allows some points to violate the margin (slack variables $\xi_i$), trading off margin size against classification errors via parameter $C$.}
+\label{fig:ch09-hard-soft-margin}
+\end{figure}
+
+\begin{keyconcept}
+\textbf{Why Convexity Still Matters in Deep Learning:}
+While neural network loss landscapes are highly non-convex, convex optimization principles remain essential:
+\begin{itemize}
+    \item Layer-wise subproblems are often convex (e.g., linear layers with fixed inputs)
+    \item Convex regularizers (L1, L2) have well-understood effects
+    \item Local regions around minima are approximately convex
+    \item Many training dynamics analyses assume local convexity
+\end{itemize}
+\end{keyconcept}
+
+%------------------------------------------------------------------------------
+\section{Connections to Loss Function Design}
+\label{sec:loss-design}
+
+Understanding convexity guides the design of loss functions in machine learning.
+
+\subsection{Convex Surrogates for Classification}
+
+The 0-1 loss $\ell_{0-1}(y, \hat{y}) = \mathbf{1}[y \neq \hat{y}]$ is the natural loss for classification but is non-convex (in fact, discontinuous). We use convex surrogates that upper-bound the 0-1 loss:
+
+\begin{definition}{Common Convex Surrogate Losses}{surrogate-losses}
+For binary classification with $y \in \{-1, +1\}$ and margin $m = y \cdot f(\vect{x})$:
+\begin{enumerate}
+    \item \textbf{Hinge loss}: $\ell(m) = \max(0, 1 - m)$
+    \item \textbf{Logistic loss}\index{logistic loss}\index{log loss|see{logistic loss}}: $\ell(m) = \log(1 + e^{-m})$
+    \item \textbf{Exponential loss}\index{exponential loss}: $\ell(m) = e^{-m}$
+    \item \textbf{Squared hinge}\index{hinge loss!squared}: $\ell(m) = \max(0, 1 - m)^2$
+\end{enumerate}
+\end{definition}
+
+All these losses are convex in $m$, and therefore convex in the model parameters for linear models.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.9\textwidth]{../../images/diagrams/ch09/fig-loss-comparison.png}
+\caption{Comparison of convex surrogate losses for binary classification. All losses are plotted against the margin $m = y \cdot f(\vect{x})$. The 0-1 loss (black, step function) is non-convex. The hinge loss (blue) is piecewise linear; the logistic loss (orange) is smooth; the exponential loss (green) penalizes large negative margins heavily. All surrogates upper-bound the 0-1 loss.}
+\label{fig:ch09-loss-comparison}
+\end{figure}
+
+\begin{theorem}{Calibration of Surrogate Losses}{calibration}
+A convex surrogate loss is \textbf{classification-calibrated} if minimizing the surrogate risk leads to the Bayes optimal classifier. Hinge, logistic, and exponential losses are all calibrated, meaning their convex optimization yields classifiers that minimize 0-1 error asymptotically.
+\end{theorem}
+
+\subsection{Why Convex Losses for Regression?}
+
+\begin{principle}
+For regression, squared error $(y - f(\vect{x}))^2$ and absolute error $|y - f(\vect{x})|$ are both convex in the prediction $f(\vect{x})$. This ensures that:
+\begin{enumerate}
+    \item Optimal predictions are unique (for strictly convex losses)
+    \item Gradient-based optimization converges reliably
+    \item Statistical properties (unbiasedness, consistency) are easier to establish
+\end{enumerate}
+\end{principle}
+
+\begin{example}{Cross-Entropy is Convex}{cross-entropy-convex}
+For softmax outputs $\vect{p} = \softmax(\vect{z})$, the cross-entropy loss
+\[
+    \ell(\vect{z}, y) = -\log p_y = -z_y + \log\sum_k e^{z_k}
+\]
+is convex in $\vect{z}$\index{cross-entropy!convexity} because:
+\begin{itemize}
+    \item $-z_y$ is linear (hence convex)
+    \item $\log\sum_k e^{z_k}$ (log-sum-exp) is convex
+    \item Sum of convex functions is convex
+\end{itemize}
+\end{example}
+
+%------------------------------------------------------------------------------
+\section{Beyond Convexity: Non-Convex Machine Learning}
+\label{sec:beyond-convex}
+
+While convexity provides strong guarantees, many modern ML problems are inherently non-convex.
+
+\subsection{Non-Convexity in Deep Learning}
+
+\begin{important}
+Neural network loss functions are non-convex due to:
+\begin{enumerate}
+    \item Composition of nonlinear activation functions
+    \item Weight space symmetries (permuting neurons gives equivalent networks)
+    \item High dimensionality creating complex loss landscapes
+\end{enumerate}
+Despite non-convexity, empirically, gradient-based methods often find good solutions. Research suggests that in high dimensions, most local minima have similar loss values to the global minimum.
+\end{important}
+
+\subsection{Techniques for Non-Convex Problems}
+
+Several techniques help address non-convexity:
+
+\begin{enumerate}
+    \item \textbf{Convex Relaxation}\index{convex relaxation}: Replace the non-convex problem with a convex approximation
+
+    \item \textbf{Sequential Convex Programming}: Iteratively solve convex approximations
+
+    \item \textbf{Graduated Optimization}: Start with a smoothed (more convex) version and gradually recover the original problem
+
+    \item \textbf{Random Restarts}: Run optimization from multiple initializations
+
+    \item \textbf{Stochastic Methods}: SGD noise can help escape poor local minima
+\end{enumerate}
+
+\begin{whatbreaks}
+\textbf{Exercise 1:} Add a non-convex constraint $x_1^2 + x_2^2 \geq 1$ (exterior of a circle) to a convex objective. Can you still guarantee finding the global optimum? Try an example.
+
+\textbf{Exercise 2:} Construct a problem where Slater's condition fails (no strictly feasible point exists). Do the KKT conditions still give the right answer?
+\end{whatbreaks}
+
+%------------------------------------------------------------------------------
+\section{Exercises}
+\label{sec:convex-exercises}
+
+\begin{exercise}{Proving Convexity}{ex-prove-convex}
+Prove that the following functions are convex:
+\begin{enumerate}[label=(\alph*)]
+    \item $f(\vect{x}) = \norm{\vect{x}}_1 = \sum_i |x_i|$
+    \item $f(\vect{x}) = \max_i x_i$
+    \item $f(x) = x \log x$ for $x > 0$
+    \item $f(\mat{X}) = -\log\det(\mat{X})$ for $\mat{X} \succ 0$
+\end{enumerate}
+\end{exercise}
+
+\begin{exercise}{KKT Conditions}{ex-kkt}
+Consider the problem:
+\begin{align*}
+    \min_{x,y} \quad & x^2 + y^2 \\
+    \text{subject to} \quad & x + y \geq 4 \\
+    & x, y \geq 0
+\end{align*}
+\begin{enumerate}[label=(\alph*)]
+    \item Write down the KKT conditions.
+    \item Solve for the optimal solution and Lagrange multipliers.
+    \item Verify complementary slackness.
+\end{enumerate}
+\end{exercise}
+
+\begin{exercise}{SVM Dual Derivation}{ex-svm-dual}
+Starting from the soft-margin SVM primal:
+\begin{align*}
+    \min_{\vect{w}, b, \vect{\xi}} \quad & \frac{1}{2}\norm{\vect{w}}^2 + C\sum_{i=1}^n \xi_i \\
+    \text{subject to} \quad & y_i(\vect{w}\trans \vect{x}_i + b) \geq 1 - \xi_i, \quad \xi_i \geq 0
+\end{align*}
+\begin{enumerate}[label=(\alph*)]
+    \item Form the Lagrangian with multipliers $\alpha_i \geq 0$ and $\mu_i \geq 0$.
+    \item Derive the dual problem by eliminating $\vect{w}$, $b$, and $\vect{\xi}$.
+    \item Show that the dual constraint becomes $0 \leq \alpha_i \leq C$.
+\end{enumerate}
+\end{exercise}
+
+\begin{exercise}{Convex Loss Functions}{ex-convex-loss}
+\begin{enumerate}[label=(\alph*)]
+    \item Show that hinge loss $\max(0, 1 - m)$ is convex but not differentiable everywhere. Where is it non-differentiable?
+    \item Show that squared hinge loss $[\max(0, 1-m)]^2$ is convex and differentiable everywhere.
+    \item Compute the gradient of logistic loss $\log(1 + e^{-m})$ and show it approaches a step function as the margin grows.
+\end{enumerate}
+\end{exercise}
+
+\begin{exercise}{Strong Convexity and Regularization}{ex-strong-convex-reg}
+Consider the ridge regression objective:
+\[
+    f(\vect{w}) = \frac{1}{n}\sum_{i=1}^n (y_i - \vect{w}\trans \vect{x}_i)^2 + \lambda \norm{\vect{w}}^2
+\]
+\begin{enumerate}[label=(\alph*)]
+    \item Compute the Hessian $\Hess f(\vect{w})$.
+    \item Show that $f$ is $\mu$-strongly convex. What is $\mu$ in terms of $\lambda$ and the data?
+    \item How does increasing $\lambda$ affect the condition number and convergence rate of gradient descent?
+\end{enumerate}
+\end{exercise}
+
+%------------------------------------------------------------------------------
+\section{Summary}
+\label{sec:convex-summary}
+
+In this chapter, we developed the theory of convex optimization and its applications to machine learning:
+
+\begin{itemize}
+    \item \textbf{Convex sets} are characterized by containing all line segments between their points. Important examples include halfspaces, polyhedra, and positive semidefinite cones.
+
+    \item \textbf{Convex functions} satisfy $f(\lambda \vect{x} + (1-\lambda)\vect{y}) \leq \lambda f(\vect{x}) + (1-\lambda)f(\vect{y})$, ensuring that tangent hyperplanes are global underestimators.
+
+    \item \textbf{First-order} and \textbf{second-order conditions} provide practical tests for convexity: the Hessian must be positive semidefinite for twice-differentiable functions.
+
+    \item \textbf{Lagrangian duality} transforms constrained problems into unconstrained ones, with strong duality holding for convex problems under mild conditions.
+
+    \item \textbf{KKT conditions} characterize optimal solutions through stationarity, feasibility, and complementary slackness.
+
+    \item \textbf{Support Vector Machines} exemplify how convex optimization theory leads to elegant, efficiently solvable machine learning algorithms.
+
+    \item \textbf{Loss function design} is guided by convexity: convex surrogates for the 0-1 loss enable tractable optimization while maintaining calibration.
+\end{itemize}
+
+Understanding convexity provides the foundation for both theoretical analysis and practical algorithm design in machine learning. In the next chapter, we introduce \textbf{stochastic optimization}---the practical algorithms that make training on massive datasets feasible by using noisy gradient estimates.
+
+\section*{Interview Questions}
+\begin{interviewquestions}
+
+\textbf{Question 1: Why does convexity guarantee finding the global optimum?}
+
+\textit{Expected follow-ups:}
+\begin{itemize}
+    \item Can you prove this property? (Hint: use the definition of convexity)
+    \item What happens with multiple global minima in a convex function?
+    \item How does this relate to gradient descent convergence?
+\end{itemize}
+
+\textit{Red flags to avoid:}
+\begin{itemize}
+    \item Confusing convexity with having a unique minimum (convex functions can have multiple global minima on a flat region)
+    \item Saying ``the gradient points to the minimum''---gradients point in the steepest descent direction, not directly to the optimum
+    \item Forgetting that strong convexity (not just convexity) guarantees uniqueness
+\end{itemize}
+
+\textit{Strong answer key points:}
+\begin{itemize}
+    \item Every local minimum is a global minimum because convexity means the function lies above its tangent hyperplanes
+    \item Mathematically: if $\grad f(\vect{x}^*) = 0$, then for any $\vect{y}$: $f(\vect{y}) \geq f(\vect{x}^*) + \grad f(\vect{x}^*)^\top(\vect{y} - \vect{x}^*) = f(\vect{x}^*)$
+    \item Strict convexity guarantees uniqueness; plain convexity allows a convex set of global minima
+\end{itemize}
+
+\vspace{0.5em}
+\textbf{Question 2: How do you verify if a function is convex?}
+
+\textit{Expected follow-ups:}
+\begin{itemize}
+    \item What if the function is not twice differentiable?
+    \item How would you verify convexity of $f(x) = \max(0, 1-x)$ (hinge loss)?
+    \item Is the cross-entropy loss convex? In what variables?
+\end{itemize}
+
+\textit{Red flags to avoid:}
+\begin{itemize}
+    \item Only mentioning the Hessian method without acknowledging it requires twice differentiability
+    \item Claiming neural network loss functions are convex (they are highly non-convex)
+    \item Confusing convexity of the loss in predictions vs. convexity in parameters
+\end{itemize}
+
+\textit{Strong answer key points:}
+\begin{itemize}
+    \item Three equivalent methods: (1) Definition: $f(\lambda x + (1-\lambda)y) \leq \lambda f(x) + (1-\lambda)f(y)$; (2) First-order condition: $f(y) \geq f(x) + \grad f(x)^\top(y-x)$; (3) Second-order: Hessian $\succeq 0$
+    \item Convexity-preserving operations: non-negative weighted sums, pointwise maximum, composition with affine functions
+    \item Cross-entropy is convex in logits but the overall NN loss is non-convex in weights due to nonlinear composition
+\end{itemize}
+
+\vspace{0.5em}
+\textbf{Question 3: Explain the KKT conditions and when they are useful.}
+
+\textit{Expected follow-ups:}
+\begin{itemize}
+    \item What is complementary slackness and what does it mean intuitively?
+    \item When do KKT conditions guarantee optimality?
+    \item How are KKT conditions used in SVM derivation?
+\end{itemize}
+
+\textit{Red flags to avoid:}
+\begin{itemize}
+    \item Listing KKT conditions without understanding what each one means
+    \item Forgetting that KKT conditions are necessary for general problems but sufficient only for convex problems
+    \item Not mentioning constraint qualifications (like Slater's condition)
+\end{itemize}
+
+\textit{Strong answer key points:}
+\begin{itemize}
+    \item Four conditions: stationarity ($\grad L = 0$), primal feasibility, dual feasibility ($\lambda \geq 0$), complementary slackness ($\lambda_i g_i(x) = 0$)
+    \item Complementary slackness: either a constraint is active ($g_i = 0$) or its multiplier is zero---inactive constraints don't affect the solution
+    \item For SVMs, KKT reveals that only support vectors (points on the margin) have $\alpha_i > 0$
+\end{itemize}
+
+\vspace{0.5em}
+\textbf{Question 4: What's the difference between convex, strictly convex, and strongly convex?}
+
+\textit{Expected follow-ups:}
+\begin{itemize}
+    \item Give an example of a function that is convex but not strictly convex
+    \item How does strong convexity affect gradient descent convergence?
+    \item How does L2 regularization relate to strong convexity?
+\end{itemize}
+
+\textit{Red flags to avoid:}
+\begin{itemize}
+    \item Confusing strict and strong convexity---they are different properties
+    \item Not knowing that $f(x) = |x|$ is convex but not strictly convex
+    \item Missing the connection between strong convexity parameter $\mu$ and convergence rate
+\end{itemize}
+
+\textit{Strong answer key points:}
+\begin{itemize}
+    \item Convex: $f(\lambda x + (1-\lambda)y) \leq \lambda f(x) + (1-\lambda)f(y)$; linear functions qualify
+    \item Strictly convex: strict inequality for $x \neq y$; guarantees at most one minimum
+    \item Strongly convex ($\mu$-strongly): $f(y) \geq f(x) + \grad f(x)^\top(y-x) + \frac{\mu}{2}\|y-x\|^2$; guarantees exactly one minimum and linear convergence rate
+    \item Adding $\frac{\lambda}{2}\|\theta\|^2$ makes any convex function $\lambda$-strongly convex
+\end{itemize}
+
+\vspace{0.5em}
+\textbf{Question 5: Why do we care about convexity in ML when neural networks are non-convex?}
+
+\textit{Expected follow-ups:}
+\begin{itemize}
+    \item Which ML models have convex loss functions?
+    \item How does convex analysis help understand non-convex optimization?
+    \item What role do convex subproblems play in training?
+\end{itemize}
+
+\textit{Red flags to avoid:}
+\begin{itemize}
+    \item Saying convexity is irrelevant to deep learning
+    \item Not recognizing that many classical ML methods (logistic regression, SVM, ridge regression) are convex
+    \item Missing that local regions around minima are approximately convex
+\end{itemize}
+
+\textit{Strong answer key points:}
+\begin{itemize}
+    \item Convex models: logistic regression, SVMs, linear regression, Lasso---these have guaranteed global optima
+    \item Convex regularizers (L1, L2) have well-understood effects even in non-convex settings
+    \item Taylor expansion around any point is locally quadratic (hence locally convex), which is why gradient descent makes local progress
+    \item Understanding convex optimization provides intuition for algorithm design and debugging training failures
+\end{itemize}
+
+\end{interviewquestions}
+
+%------------------------------------------------------------------------------
+%  CHAPTER SUMMARY
+%------------------------------------------------------------------------------
+\begin{chaptersummary}
+\textbf{What We Covered:}
+\begin{itemize}
+    \item Convex sets contain all line segments between their points; convex functions have the property that tangent hyperplanes are global underestimators
+    \item First-order and second-order conditions provide practical tests: $\Hess f(\vect{x}) \succeq 0$ implies convexity
+    \item Lagrangian duality and KKT conditions characterize optimal solutions through stationarity, feasibility, and complementary slackness
+    \item SVMs exemplify convex optimization in ML: maximum-margin classifiers with elegant dual formulations
+\end{itemize}
+
+\textbf{Key Formulas:}
+\begin{align*}
+    &\text{Convexity: } f(\lambda \vect{x} + (1-\lambda)\vect{y}) \leq \lambda f(\vect{x}) + (1-\lambda)f(\vect{y}) \\
+    &\text{KKT Stationarity: } \grad f_0(\vect{x}^*) + \sum_i \lambda_i^* \grad f_i(\vect{x}^*) = \vect{0} \\
+    &\text{Strong Convexity: } f(\vect{y}) \geq f(\vect{x}) + \grad f(\vect{x})\trans (\vect{y} - \vect{x}) + \frac{\mu}{2}\norm{\vect{y} - \vect{x}}^2
+\end{align*}
+
+\textbf{When to Use This:}
+\begin{itemize}
+    \item When you need guaranteed global optima (SVMs, logistic regression, ridge regression)
+    \item Designing loss functions---convex surrogates for non-convex objectives like 0-1 loss
+    \item Analyzing whether optimization algorithms will converge reliably
+    \item Understanding regularization effects through the lens of constrained optimization
+\end{itemize}
+
+\textbf{Next Up:} Stochastic optimization methods that enable training on massive datasets by replacing exact gradients with noisy estimates computed from mini-batches.
+\end{chaptersummary}
+
+\end{document}

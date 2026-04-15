@@ -1,0 +1,174 @@
+\documentclass[../main.tex]{subfiles}
+
+\begin{document}
+
+\chapter*{Math Recap: Essential Foundations}
+\addcontentsline{toc}{chapter}{Math Recap}
+
+\textit{This chapter provides a concise review of the mathematical concepts from Book 1 that are essential for understanding optimization. For complete coverage, see \textbf{Book 1: The Math That Powers AI}.}
+
+\section*{Linear Algebra Essentials}
+
+\subsection*{Vectors and Matrices}
+
+A \textbf{vector} $\mathbf{x} \in \mathbb{R}^n$ is an ordered array of $n$ real numbers:
+\[
+\mathbf{x} = \begin{bmatrix} x_1 \\ x_2 \\ \vdots \\ x_n \end{bmatrix}
+\]
+
+The \textbf{inner product} (dot product) measures similarity:
+\[
+\mathbf{x}^\top \mathbf{y} = \sum_{i=1}^{n} x_i y_i
+\]
+
+The \textbf{norm} measures vector length. The L2 (Euclidean) norm is:
+\[
+\|\mathbf{x}\|_2 = \sqrt{\sum_{i=1}^{n} x_i^2}
+\]
+
+A \textbf{matrix} $\mathbf{A} \in \mathbb{R}^{m \times n}$ represents a linear transformation from $\mathbb{R}^n$ to $\mathbb{R}^m$.
+
+\subsection*{Eigenvalues and Eigenvectors}
+
+For a square matrix $\mathbf{A}$, an \textbf{eigenvector} $\mathbf{v}$ and \textbf{eigenvalue} $\lambda$ satisfy:
+\[
+\mathbf{A}\mathbf{v} = \lambda\mathbf{v}
+\]
+
+The eigenvector points in a direction that the matrix only scales (by $\lambda$), not rotates. For optimization:
+\begin{itemize}
+    \item Eigenvalues of the Hessian determine curvature
+    \item The \textbf{condition number} $\kappa = \lambda_{\max}/\lambda_{\min}$ affects optimization difficulty
+    \item Poorly conditioned problems (high $\kappa$) are harder to optimize
+\end{itemize}
+
+\subsection*{Positive Definite Matrices}
+
+A symmetric matrix $\mathbf{A}$ is \textbf{positive definite} if $\mathbf{x}^\top \mathbf{A} \mathbf{x} > 0$ for all nonzero $\mathbf{x}$.
+
+Equivalently, all eigenvalues are positive. Positive definite Hessians indicate a local minimum.
+
+\section*{Calculus Essentials}
+
+\subsection*{Gradients}
+
+For a function $f: \mathbb{R}^n \to \mathbb{R}$, the \textbf{gradient} is:
+\[
+\nabla f(\mathbf{x}) = \begin{bmatrix} \frac{\partial f}{\partial x_1} \\ \frac{\partial f}{\partial x_2} \\ \vdots \\ \frac{\partial f}{\partial x_n} \end{bmatrix}
+\]
+
+The gradient points in the direction of steepest increase. To minimize, we move \textit{opposite} to the gradient.
+
+\subsection*{The Chain Rule}
+
+For composed functions $h(x) = f(g(x))$:
+\[
+\frac{dh}{dx} = \frac{df}{dg} \cdot \frac{dg}{dx}
+\]
+
+In vector form, for $\mathbf{h} = f(\mathbf{g}(\mathbf{x}))$:
+\[
+\frac{\partial \mathbf{h}}{\partial \mathbf{x}} = \frac{\partial f}{\partial \mathbf{g}} \cdot \frac{\partial \mathbf{g}}{\partial \mathbf{x}}
+\]
+
+The chain rule is the foundation of backpropagation.
+
+\subsection*{The Hessian}
+
+The \textbf{Hessian} is the matrix of second derivatives:
+\[
+\mathbf{H}_{ij} = \frac{\partial^2 f}{\partial x_i \partial x_j}
+\]
+
+The Hessian captures local curvature:
+\begin{itemize}
+    \item \textbf{Positive definite} $\mathbf{H}$: local minimum
+    \item \textbf{Negative definite} $\mathbf{H}$: local maximum
+    \item \textbf{Indefinite} $\mathbf{H}$: saddle point
+\end{itemize}
+
+\section*{Probability Essentials}
+
+\subsection*{Expectations and Variance}
+
+The \textbf{expected value} of a random variable $X$:
+\[
+\mathbb{E}[X] = \sum_x x \cdot P(X=x) \quad \text{or} \quad \mathbb{E}[X] = \int x \cdot p(x) \, dx
+\]
+
+The \textbf{variance} measures spread:
+\[
+\text{Var}(X) = \mathbb{E}[(X - \mathbb{E}[X])^2] = \mathbb{E}[X^2] - (\mathbb{E}[X])^2
+\]
+
+\subsection*{Key Distributions}
+
+\textbf{Gaussian (Normal):} $\mathcal{N}(\mu, \sigma^2)$ with density $p(x) = \frac{1}{\sqrt{2\pi\sigma^2}} \exp\left(-\frac{(x-\mu)^2}{2\sigma^2}\right)$
+
+\textbf{Bernoulli:} Binary outcomes with $P(X=1) = p$
+
+\textbf{Categorical:} Generalization to $K$ classes
+
+\subsection*{Bayes' Theorem}
+
+\[
+P(A|B) = \frac{P(B|A) \cdot P(A)}{P(B)}
+\]
+
+Connects prior beliefs $P(A)$ to posterior beliefs $P(A|B)$ given evidence $B$.
+
+\section*{Convexity Basics}
+
+\subsection*{Convex Sets and Functions}
+
+A set $C$ is \textbf{convex} if for any $\mathbf{x}, \mathbf{y} \in C$ and $\theta \in [0,1]$:
+\[
+\theta \mathbf{x} + (1-\theta)\mathbf{y} \in C
+\]
+
+A function $f$ is \textbf{convex} if:
+\[
+f(\theta \mathbf{x} + (1-\theta)\mathbf{y}) \leq \theta f(\mathbf{x}) + (1-\theta) f(\mathbf{y})
+\]
+
+Geometrically: the function lies below any chord connecting two points.
+
+\subsection*{Why Convexity Matters}
+
+For convex functions:
+\begin{itemize}
+    \item Every local minimum is a \textbf{global minimum}
+    \item Gradient descent is guaranteed to converge
+    \item First-order conditions are sufficient for optimality
+\end{itemize}
+
+Examples of convex functions: $x^2$, $e^x$, $\|\mathbf{x}\|_2$, $-\log(x)$ for $x > 0$
+
+\section*{Quick Reference: Key Formulas}
+
+\begin{center}
+\begin{tabular}{ll}
+\hline
+\textbf{Concept} & \textbf{Formula} \\
+\hline
+L2 norm & $\|\mathbf{x}\|_2 = \sqrt{\sum_i x_i^2}$ \\
+Eigenvalue equation & $\mathbf{A}\mathbf{v} = \lambda\mathbf{v}$ \\
+Gradient & $\nabla f = [\partial f/\partial x_1, \ldots, \partial f/\partial x_n]^\top$ \\
+Chain rule & $\frac{d}{dx}f(g(x)) = f'(g(x)) \cdot g'(x)$ \\
+Gradient descent update & $\mathbf{x}_{t+1} = \mathbf{x}_t - \eta \nabla f(\mathbf{x}_t)$ \\
+Convexity condition & $f(\theta\mathbf{x} + (1-\theta)\mathbf{y}) \leq \theta f(\mathbf{x}) + (1-\theta)f(\mathbf{y})$ \\
+Bayes' theorem & $P(A|B) = P(B|A)P(A)/P(B)$ \\
+Variance & $\text{Var}(X) = \mathbb{E}[X^2] - (\mathbb{E}[X])^2$ \\
+\hline
+\end{tabular}
+\end{center}
+
+\vspace{0.5cm}
+
+\begin{center}
+\fbox{\parbox{0.85\textwidth}{
+\textbf{Need more depth?} This recap covers the essentials, but optimization builds heavily on these foundations. For complete coverage including proofs, additional examples, and deeper intuition, see \textbf{Book 1: The Math That Powers AI}.
+}}
+\end{center}
+
+\end{document}
