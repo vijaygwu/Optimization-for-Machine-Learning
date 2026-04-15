@@ -297,12 +297,11 @@ class AdamW(Optimizer):
                     np.maximum(max_exp_avg_sq, exp_avg_sq, out=max_exp_avg_sq)
                     v_hat = max_exp_avg_sq / bias_correction2
 
-                # Adam update
-                param -= lr * m_hat / (np.sqrt(v_hat) + eps)
-
-                # Decoupled weight decay (applied directly to weights)
+                # Decoupled weight decay + Adam update (applied in single step)
+                # Weight decay is applied to PRE-update params, not post-update
                 if weight_decay != 0:
-                    param -= lr * weight_decay * param
+                    param *= (1 - lr * weight_decay)  # Apply weight decay first
+                param -= lr * m_hat / (np.sqrt(v_hat) + eps)  # Then Adam update
 
 
 class NAdam(Optimizer):

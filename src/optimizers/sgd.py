@@ -240,9 +240,8 @@ class SGDW(SGD):
                     else:
                         grad = buf
 
-                # Update parameters
-                param -= lr * grad
-
-                # Decoupled weight decay: applied directly to weights
+                # Decoupled weight decay + gradient update (single step)
+                # Weight decay is applied to PRE-update params
                 if weight_decay != 0:
-                    param -= lr * weight_decay * param
+                    param *= (1 - lr * weight_decay)  # Apply weight decay first
+                param -= lr * grad  # Then gradient update
