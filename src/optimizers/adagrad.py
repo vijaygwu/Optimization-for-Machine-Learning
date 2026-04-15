@@ -139,6 +139,9 @@ class Adagrad(Optimizer):
                 if grad is None:
                     continue
 
+                # Prevent overflow in accumulator
+                grad = np.clip(grad, -1e6, 1e6)
+
                 # Get or initialize state
                 param_id = self._get_param_id(param)
                 if param_id not in self.state:
