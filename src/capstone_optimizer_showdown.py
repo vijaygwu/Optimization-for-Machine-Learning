@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import matplotlib.pyplot as plt
 import numpy as np
 
 
@@ -394,6 +393,7 @@ def run_optimizer_showdown():
 
 
 def plot_results(all_results):
+    import matplotlib.pyplot as plt
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
     colors = {
         "SGD": "#1f77b4",
@@ -592,6 +592,7 @@ def learning_rate_sensitivity(X_train, y_train, X_val, y_val):
 
 
 def plot_sensitivity(sensitivity_results):
+    import matplotlib.pyplot as plt
     plt.figure(figsize=(10, 6))
     colors = {
         "SGD": "#1f77b4",
@@ -850,6 +851,7 @@ def plot_convergence_analysis(results_dict):
     """
     Create publication-quality convergence analysis plots.
     """
+    import matplotlib.pyplot as plt
     fig, axes = plt.subplots(2, 2, figsize=(12, 10))
 
     colors = {'SGD': '#1f77b4', 'SGD with Momentum': '#ff7f0e',

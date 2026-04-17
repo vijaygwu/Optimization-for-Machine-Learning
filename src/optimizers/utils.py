@@ -658,9 +658,14 @@ def lr_finder(model, train_loader, optimizer_class=None, criterion=None,
     except Exception as e:
         raise RuntimeError(f"Cannot access model parameters: {e}")
 
-    # Guard against empty loader
-    if len(train_loader) == 0:
-        raise ValueError("train_loader is empty")
+    # Guard against empty loader (handles both map-style and iterable datasets)
+    try:
+        loader_len = len(train_loader)
+        if loader_len == 0:
+            raise ValueError("train_loader is empty")
+    except TypeError:
+        # IterableDataset / streaming loader: __len__ not supported, skip check
+        pass
 
     # CRITICAL: Save model state AND training mode before mutation
     initial_state = {k: v.clone() for k, v in model.state_dict().items()}
