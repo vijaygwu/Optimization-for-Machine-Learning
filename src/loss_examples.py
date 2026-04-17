@@ -15,11 +15,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import Dataset
 
-try:
-    import torchvision.models as tv_models
-except ImportError:  # pragma: no cover - optional dependency at import time
-    tv_models = None
-
 
 def select_device() -> torch.device:
     """Pick the best available training device."""
@@ -126,11 +121,13 @@ class PairedSuperResolutionDataset(Dataset):
 
 
 def _default_vgg19_features() -> nn.Sequential:
-    if tv_models is None:
+    try:
+        import torchvision.models as tv_models
+    except Exception as exc:  # pragma: no cover - optional dependency at call time
         raise ImportError(
             "torchvision is required to build the default "
             "VGG19 feature extractor"
-        )
+        ) from exc
 
     weights_enum = getattr(tv_models, "VGG19_Weights", None)
     checkpoint_name = "vgg19-dcbb9e9d.pth"

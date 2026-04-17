@@ -55,7 +55,10 @@ class MLP:
 
     def cross_entropy_loss(self, logits, y_true):
         shifted = logits - np.max(logits, axis=1, keepdims=True)
-        log_probs = shifted - np.log(np.sum(np.exp(shifted), axis=1, keepdims=True))
+        exp_logits = np.exp(shifted)
+        probs = exp_logits / exp_logits.sum(axis=1, keepdims=True)
+        probs = np.clip(probs, 1e-15, 1.0)
+        log_probs = np.log(probs)
         return -np.mean(np.sum(y_true * log_probs, axis=1))
 
     def predict_proba(self, X):
@@ -234,6 +237,9 @@ def train(model, optimizer, X_train, y_train, X_val, y_val, epochs=20, batch_siz
         "val_loss": [],
         "val_acc": [],
         "epoch_times": [],
+        "best_params": None,
+        "best_val_acc": 0.0,
+        "best_epoch": 0,
     }
     import time
 
@@ -252,6 +258,10 @@ def train(model, optimizer, X_train, y_train, X_val, y_val, epochs=20, batch_siz
         val_logits = model.forward(X_val)
         val_loss = model.cross_entropy_loss(val_logits, y_val)
         val_acc = compute_accuracy(model, X_val, y_val)
+        if val_acc > history["best_val_acc"]:
+            history["best_val_acc"] = val_acc
+            history["best_params"] = model.copy_params()
+            history["best_epoch"] = epoch + 1
         history["train_loss"].append(train_loss)
         history["train_acc"].append(train_acc)
         history["val_loss"].append(val_loss)
@@ -275,6 +285,7 @@ def run_optimizer_showdown():
         SGDMomentum(learning_rate=0.01, momentum=0.9),
         RMSprop(learning_rate=0.001, rho=0.99),
         Adam(learning_rate=0.001, beta1=0.9, beta2=0.999),
+        AdamW(learning_rate=0.001, beta1=0.9, beta2=0.999, weight_decay=0.01),
     ]
     base_model = MLP(seed=42)
     initial_params = base_model.copy_params()
@@ -299,13 +310,27 @@ def run_optimizer_showdown():
         )
         all_results[opt.get_name()] = history
         trained_models[opt.get_name()] = model
+
+    # Select the winner using validation performance only.
+    best_name = max(all_results, key=lambda name: all_results[name]["best_val_acc"])
+    best_history = all_results[best_name]
+    best_val_acc = best_history["best_val_acc"]
+    best_epoch = best_history["best_epoch"]
+
+    # Restore the checkpoint that achieved best validation accuracy.
+    best_model = MLP(seed=42)
+    best_model.set_params(best_history["best_params"])
+
     print(f"\n{'='*60}")
-    print("FINAL TEST SET EVALUATION (single evaluation)")
+    print("FINAL TEST SET EVALUATION (selected model only)")
     print(f"{'='*60}")
-    for name, model in trained_models.items():
-        test_acc = compute_accuracy(model, X_test, y_test)
-        all_results[name]["final_test_acc"] = test_acc
-        print(f"{name.split('(')[0]:<20} Test Accuracy: {test_acc*100:.2f}%")
+    test_acc = compute_accuracy(best_model, X_test, y_test)
+    all_results[best_name]["selected_test_acc"] = test_acc
+    print(
+        f"Selected by validation: {best_name.split('(')[0]} "
+        f"(best val acc: {best_val_acc*100:.2f}% at epoch {best_epoch})"
+    )
+    print(f"Held-out test accuracy: {test_acc*100:.2f}%")
     return all_results
 
 
@@ -316,12 +341,13 @@ def plot_results(all_results):
         "SGD with Momentum": "#ff7f0e",
         "RMSprop": "#2ca02c",
         "Adam": "#d62728",
+        "AdamW": "#17becf",
     }
 
     def get_color(name):
         if "SGD with Momentum" in name:
             return colors["SGD with Momentum"]
-        for key in ["Adam", "RMSprop", "SGD"]:
+        for key in ["AdamW", "Adam", "RMSprop", "SGD"]:
             if key in name:
                 return colors[key]
         return "black"
@@ -425,14 +451,13 @@ def print_summary_table(final_metrics, all_results):
     print("OPTIMIZER SHOWDOWN RESULTS")
     print("=" * 80)
     print(
-        f"\n{'Optimizer':<20} {'Val Acc':<12} {'Test Acc':<12} "
+        f"\n{'Optimizer':<20} {'Val Acc':<12} "
         f"{'Epochs to 95%':<15} {'Total Time':<12}"
     )
     print("-" * 80)
     for name, history in all_results.items():
         val_acc = history["val_acc"]
         final_val_acc = val_acc[-1] * 100
-        final_test_acc = history.get("final_test_acc", 0) * 100
         total_time = sum(history["epoch_times"])
         epochs_to_95 = "N/A"
         for i, acc in enumerate(val_acc):
@@ -441,11 +466,21 @@ def print_summary_table(final_metrics, all_results):
                 break
         short_name = name.split("(")[0]
         print(
-            f"{short_name:<20} {final_val_acc:<12.2f}% {final_test_acc:<12.2f}% "
+            f"{short_name:<20} {final_val_acc:<12.2f}% "
             f"{epochs_to_95:<15} {total_time:<12.2f}s"
         )
-    print("\nNote: Val Acc = validation accuracy (monitored during training)")
-    print("      Test Acc = held-out test accuracy (evaluated only once)")
+
+    selected_name = next(
+        (name for name, history in all_results.items() if "selected_test_acc" in history),
+        None,
+    )
+    if selected_name is not None:
+        selected_test_acc = all_results[selected_name]["selected_test_acc"] * 100
+        print(f"\nSelected by validation: {selected_name.split('(')[0]}")
+        print(f"Held-out test accuracy: {selected_test_acc:.2f}%")
+
+    print("\nNote: Table ranks optimizers by validation metrics only.")
+    print("      Held-out test accuracy is evaluated once after selection.")
 
 
 def learning_rate_sensitivity(X_train, y_train, X_val, y_val):
@@ -455,6 +490,7 @@ def learning_rate_sensitivity(X_train, y_train, X_val, y_val):
         "SGD with Momentum": 0.01,
         "RMSprop": 0.001,
         "Adam": 0.001,
+        "AdamW": 0.001,
     }
     sensitivity_results = {name: {"lrs": [], "accs": []} for name in base_lrs}
     base_model = MLP(seed=42)
@@ -469,8 +505,12 @@ def learning_rate_sensitivity(X_train, y_train, X_val, y_val):
                 opt = SGDMomentum(learning_rate=lr, momentum=0.9)
             elif name == "RMSprop":
                 opt = RMSprop(learning_rate=lr)
-            else:
+            elif name == "Adam":
                 opt = Adam(learning_rate=lr)
+            else:
+                opt = AdamW(
+                    learning_rate=lr, beta1=0.9, beta2=0.999, weight_decay=0.01
+                )
             model = MLP(seed=42)
             model.set_params([p.copy() for p in initial_params])
             opt.reset()
@@ -499,6 +539,7 @@ def plot_sensitivity(sensitivity_results):
         "SGD with Momentum": "#ff7f0e",
         "RMSprop": "#2ca02c",
         "Adam": "#d62728",
+        "AdamW": "#17becf",
     }
     for name, data in sensitivity_results.items():
         plt.plot(
@@ -621,21 +662,403 @@ def clip_gradients(grads, max_norm=1.0):
     return grads, total_norm
 
 
+class LAMB(Optimizer):
+    """
+    LAMB: Layer-wise Adaptive Moments optimizer.
+
+    Key idea: Scale the Adam update by the ratio of parameter norm
+    to update norm, computed per-layer. This allows stable training
+    with very large batch sizes.
+
+    Reference: You et al., "Large Batch Optimization for Deep Learning:
+    Training BERT in 76 minutes" (2019)
+    """
+
+    def __init__(self, learning_rate=0.001, beta1=0.9, beta2=0.999,
+                 epsilon=1e-6, weight_decay=0.01):
+        super().__init__(learning_rate)
+        self.beta1 = beta1
+        self.beta2 = beta2
+        self.epsilon = epsilon
+        self.weight_decay = weight_decay
+        self.m = None
+        self.v = None
+        self.t = 0
+
+    def step(self, model, grads):
+        """Apply LAMB update with layer-wise trust ratio."""
+        param_names = ['W1', 'b1', 'W2', 'b2', 'W3', 'b3']
+        params = model.get_params()
+
+        if self.m is None:
+            self.m = {name: np.zeros_like(grads[name]) for name in param_names}
+            self.v = {name: np.zeros_like(grads[name]) for name in param_names}
+
+        self.t += 1
+
+        for i, name in enumerate(param_names):
+            # Adam moment updates
+            self.m[name] = self.beta1 * self.m[name] + (1 - self.beta1) * grads[name]
+            self.v[name] = self.beta2 * self.v[name] + (1 - self.beta2) * grads[name]**2
+
+            # Bias correction
+            m_hat = self.m[name] / (1 - self.beta1**self.t)
+            v_hat = self.v[name] / (1 - self.beta2**self.t)
+
+            # Adam update (before trust ratio scaling)
+            adam_update = m_hat / (np.sqrt(v_hat) + self.epsilon)
+
+            # Add weight decay (decoupled, like AdamW)
+            is_weight = name.startswith('W')
+            if is_weight and self.weight_decay > 0:
+                adam_update = adam_update + self.weight_decay * params[i]
+
+            # LAMB trust ratio: scale by ||param|| / ||update||
+            param_norm = np.linalg.norm(params[i])
+            update_norm = np.linalg.norm(adam_update)
+
+            if param_norm > 0 and update_norm > 0:
+                trust_ratio = param_norm / update_norm
+            else:
+                trust_ratio = 1.0
+
+            # Apply scaled update
+            params[i] = params[i] - self.lr * trust_ratio * adam_update
+
+        model.set_params(params)
+
+    def reset(self):
+        self.m = None
+        self.v = None
+        self.t = 0
+
+    def get_name(self):
+        return f"LAMB(wd={self.weight_decay})"
+
+
+def convergence_analysis(model, optimizer, X_train, y_train,
+                         X_val, y_val, epochs=50, batch_size=128):
+    """
+    Track metrics relevant to convergence theory:
+    - Gradient norm decay
+    - Loss suboptimality gap
+    - Distance from initialization
+    """
+    initial_params = model.copy_params()
+
+    history = {
+        'loss': [],
+        'grad_norm': [],
+        'param_distance': [],
+        'loss_variance': []  # Within-epoch variance
+    }
+
+    for epoch in range(epochs):
+        epoch_losses = []
+        epoch_grad_norms = []
+
+        for X_batch, y_batch in create_batches(X_train, y_train, batch_size):
+            logits = model.forward(X_batch)
+            loss = model.cross_entropy_loss(logits, y_batch)
+            grads = model.backward(y_batch)
+
+            # Track gradient norm before update
+            grad_norm = sum(np.sum(g**2) for g in grads.values())
+            grad_norm = np.sqrt(grad_norm)
+            epoch_grad_norms.append(grad_norm)
+            epoch_losses.append(loss)
+
+            optimizer.step(model, grads)
+
+        # Epoch-level metrics
+        history['loss'].append(np.mean(epoch_losses))
+        history['grad_norm'].append(np.mean(epoch_grad_norms))
+        history['loss_variance'].append(np.var(epoch_losses))
+
+        # Distance from initialization (in parameter space)
+        current_params = model.get_params()
+        param_dist = sum(np.sum((c - i)**2)
+                        for c, i in zip(current_params, initial_params))
+        history['param_distance'].append(np.sqrt(param_dist))
+
+    return history
+
+
+def plot_convergence_analysis(results_dict):
+    """
+    Create publication-quality convergence analysis plots.
+    """
+    fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+
+    colors = {'SGD': '#1f77b4', 'SGD with Momentum': '#ff7f0e',
+              'RMSprop': '#2ca02c', 'Adam': '#d62728', 'LAMB': '#9467bd'}
+
+    def get_color(name):
+        for key, color in colors.items():
+            if key in name:
+                return color
+        return 'black'
+
+    # Plot 1: Gradient norm decay (should decrease for convergence)
+    ax1 = axes[0, 0]
+    for name, history in results_dict.items():
+        ax1.semilogy(history['grad_norm'], label=name.split('(')[0],
+                     color=get_color(name), linewidth=2)
+    ax1.set_xlabel('Epoch')
+    ax1.set_ylabel('Gradient Norm (log scale)')
+    ax1.set_title('Gradient Norm Decay')
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+
+    # Plot 2: Loss trajectory
+    ax2 = axes[0, 1]
+    for name, history in results_dict.items():
+        ax2.semilogy(history['loss'], label=name.split('(')[0],
+                     color=get_color(name), linewidth=2)
+    ax2.set_xlabel('Epoch')
+    ax2.set_ylabel('Training Loss (log scale)')
+    ax2.set_title('Loss Convergence')
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+
+    # Plot 3: Parameter distance from initialization
+    ax3 = axes[1, 0]
+    for name, history in results_dict.items():
+        ax3.plot(history['param_distance'], label=name.split('(')[0],
+                 color=get_color(name), linewidth=2)
+    ax3.set_xlabel('Epoch')
+    ax3.set_ylabel('||theta - theta_0||')
+    ax3.set_title('Distance from Initialization')
+    ax3.legend()
+    ax3.grid(True, alpha=0.3)
+
+    # Plot 4: Loss variance (stability indicator)
+    ax4 = axes[1, 1]
+    for name, history in results_dict.items():
+        ax4.semilogy(history['loss_variance'], label=name.split('(')[0],
+                     color=get_color(name), linewidth=2)
+    ax4.set_xlabel('Epoch')
+    ax4.set_ylabel('Within-Epoch Loss Variance (log)')
+    ax4.set_title('Training Stability')
+    ax4.legend()
+    ax4.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.savefig('convergence_analysis.png', dpi=150, bbox_inches='tight')
+    plt.show()
+
+
+def load_fashion_mnist():
+    """
+    Load Fashion-MNIST for more challenging evaluation.
+    Same format as MNIST but harder classification task.
+    """
+    from sklearn.datasets import fetch_openml
+    from sklearn.model_selection import train_test_split
+
+    print("Loading Fashion-MNIST...")
+    fmnist = fetch_openml('Fashion-MNIST', version=1, as_frame=False)
+    X, y = fmnist.data, fmnist.target.astype(int)
+
+    X = X / 255.0
+    y_onehot = np.zeros((len(y), 10))
+    y_onehot[np.arange(len(y)), y] = 1
+
+    # Same split as MNIST
+    X_temp, X_test, y_temp, y_test = train_test_split(
+        X, y_onehot, test_size=0.1, random_state=42, stratify=y)
+    X_train, X_val, y_train, y_val = train_test_split(
+        X_temp, y_temp, test_size=0.1111, random_state=42,
+        stratify=np.argmax(y_temp, axis=1))
+
+    return X_train, X_val, X_test, y_train, y_val, y_test
+
+
+def compute_matched_comparison(X_train, y_train, X_val, y_val,
+                               time_budget_seconds=60):
+    """
+    Compare optimizers given the same compute budget.
+    """
+    import time
+
+    optimizers = [
+        SGD(learning_rate=0.1),
+        SGDMomentum(learning_rate=0.01, momentum=0.9),
+        RMSprop(learning_rate=0.001),
+        Adam(learning_rate=0.001),
+    ]
+
+    base_model = MLP(seed=42)
+    initial_params = base_model.copy_params()
+
+    results = {}
+
+    for opt in optimizers:
+        model = MLP(seed=42)
+        model.set_params([p.copy() for p in initial_params])
+        opt.reset()
+
+        start_time = time.time()
+        epoch = 0
+        history = {'val_acc': [], 'elapsed_time': []}
+
+        while time.time() - start_time < time_budget_seconds:
+            # Train one epoch
+            for X_batch, y_batch in create_batches(X_train, y_train, 128):
+                logits = model.forward(X_batch)
+                grads = model.backward(y_batch)
+                opt.step(model, grads)
+
+            # Record metrics
+            val_acc = compute_accuracy(model, X_val, y_val)
+            elapsed = time.time() - start_time
+            history['val_acc'].append(val_acc)
+            history['elapsed_time'].append(elapsed)
+            epoch += 1
+
+        history['total_epochs'] = epoch
+        results[opt.get_name()] = history
+        print(f"{opt.get_name()}: {epoch} epochs in {time_budget_seconds}s, "
+              f"final val_acc={history['val_acc'][-1]:.4f}")
+
+    return results
+
+
+class AdaFactor(Optimizer):
+    """
+    AdaFactor: Memory-efficient adaptive optimizer.
+
+    Key idea: Factorize second moments as outer product of row/column
+    means. This reduces memory from O(mn) to O(m+n) per weight matrix.
+
+    Reference: Shazeer & Stern, "Adafactor: Adaptive Learning Rates
+    with Sublinear Memory Cost" (2018)
+
+    Note: This is a simplified version for 2D weight matrices.
+    Full AdaFactor handles 1D biases differently.
+    """
+
+    def __init__(self, learning_rate=None, epsilon1=1e-30, epsilon2=1e-3,
+                 clip_threshold=1.0, decay_rate=-0.8, beta1=None):
+        # AdaFactor can compute lr automatically; None means auto-scale
+        super().__init__(learning_rate if learning_rate else 1.0)
+        self.auto_lr = learning_rate is None
+        self.epsilon1 = epsilon1
+        self.epsilon2 = epsilon2
+        self.clip_threshold = clip_threshold
+        self.decay_rate = decay_rate
+        self.beta1 = beta1  # Optional first moment (like Adam)
+        self.v_row = None
+        self.v_col = None
+        self.m = None
+        self.t = 0
+
+    def _get_rho(self):
+        """Compute decay rate as function of step."""
+        return min(self.decay_rate, -(self.t ** self.decay_rate))
+
+    def step(self, model, grads):
+        """Apply AdaFactor update with factorized second moments."""
+        param_names = ['W1', 'b1', 'W2', 'b2', 'W3', 'b3']
+        params = model.get_params()
+
+        if self.v_row is None:
+            self.v_row = {}
+            self.v_col = {}
+            if self.beta1 is not None:
+                self.m = {}
+            for i, name in enumerate(param_names):
+                shape = params[i].shape
+                if len(shape) == 2:
+                    self.v_row[name] = np.zeros(shape[0])
+                    self.v_col[name] = np.zeros(shape[1])
+                else:  # 1D (biases)
+                    self.v_row[name] = np.zeros_like(params[i])
+                    self.v_col[name] = None
+                if self.beta1 is not None:
+                    self.m[name] = np.zeros_like(grads[name])
+
+        self.t += 1
+        rho = min(0.999, (1 + self.t) ** self.decay_rate)
+
+        for i, name in enumerate(param_names):
+            g = grads[name]
+            shape = g.shape
+
+            if len(shape) == 2:
+                # Factorized second moment for matrices
+                g_squared = g ** 2
+                # Row mean of squared gradients
+                row_mean = np.mean(g_squared, axis=1)
+                # Column mean of squared gradients
+                col_mean = np.mean(g_squared, axis=0)
+
+                self.v_row[name] = rho * self.v_row[name] + (1 - rho) * row_mean
+                self.v_col[name] = rho * self.v_col[name] + (1 - rho) * col_mean
+
+                # Reconstruct second moment estimate
+                row_factor = self.v_row[name][:, np.newaxis]
+                col_factor = self.v_col[name][np.newaxis, :]
+                v_full = row_factor * col_factor / (np.mean(self.v_row[name]) + self.epsilon1)
+            else:
+                # Standard second moment for vectors (biases)
+                self.v_row[name] = rho * self.v_row[name] + (1 - rho) * g ** 2
+                v_full = self.v_row[name]
+
+            # Compute update
+            update = g / (np.sqrt(v_full) + self.epsilon1)
+
+            # Optional first moment (momentum)
+            if self.beta1 is not None:
+                self.m[name] = self.beta1 * self.m[name] + (1 - self.beta1) * update
+                update = self.m[name]
+
+            # Gradient clipping by RMS
+            rms = np.sqrt(np.mean(update ** 2))
+            if rms > self.clip_threshold:
+                update = update * self.clip_threshold / rms
+
+            # Learning rate (auto or specified)
+            if self.auto_lr:
+                lr = max(self.epsilon2, 1.0 / np.sqrt(self.t))
+            else:
+                lr = self.lr
+
+            params[i] = params[i] - lr * update
+
+        model.set_params(params)
+
+    def reset(self):
+        self.v_row = None
+        self.v_col = None
+        self.m = None
+        self.t = 0
+
+    def get_name(self):
+        return "AdaFactor"
+
+
 __all__ = [
+    "AdaFactor",
     "Adam",
     "AdamW",
+    "LAMB",
     "MLP",
     "Optimizer",
     "RMSprop",
     "SGD",
     "SGDMomentum",
     "clip_gradients",
+    "compute_matched_comparison",
     "compute_accuracy",
+    "convergence_analysis",
     "cosine_schedule",
     "create_batches",
     "learning_rate_sensitivity",
     "load_cifar10",
+    "load_fashion_mnist",
     "load_mnist",
+    "plot_convergence_analysis",
     "plot_results",
     "plot_sensitivity",
     "print_summary_table",
