@@ -176,13 +176,19 @@ class Optimizer(ABC):
         """
         Get a stable, deterministic key for a parameter array.
 
-        Unlike id(param) which changes across sessions, this returns
-        a stable string key based on parameter index that survives
-        checkpoint save/restore cycles.
+        Uses position-based keys (group_idx, param_idx) that are stable
+        across sessions, unlike id(param) which changes.
         """
         param_id = id(param)
         if param_id not in self._param_to_key:
-            # Assign a new stable key based on the order parameters were first seen
+            # Find the parameter's position in param_groups
+            for group_idx, group in enumerate(self.param_groups):
+                for param_idx, p in enumerate(group['params']):
+                    if p is param:
+                        key = f"g{group_idx}_p{param_idx}"
+                        self._param_to_key[param_id] = key
+                        return key
+            # Fallback: shouldn't happen, but use counter if param not found
             self._param_to_key[param_id] = f"param_{self._next_param_idx}"
             self._next_param_idx += 1
         return self._param_to_key[param_id]
