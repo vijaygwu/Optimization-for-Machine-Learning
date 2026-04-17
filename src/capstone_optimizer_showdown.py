@@ -585,7 +585,9 @@ def cosine_schedule(epoch, total_epochs, initial_lr, min_lr=1e-6):
     )
 
 
-def step_decay_schedule(epoch, initial_lr, drop_factor=0.1, drop_epochs=[30, 60, 80]):
+def step_decay_schedule(epoch, initial_lr, drop_factor=0.1, drop_epochs=None):
+    if drop_epochs is None:
+        drop_epochs = [30, 60, 80]
     lr = initial_lr
     for drop_epoch in drop_epochs:
         if epoch >= drop_epoch:
