@@ -1,6 +1,6 @@
-"""Runnable companion code for Chapter 5 (Loss Functions) examples.
+"""Runnable companion code for the Book 2 loss-function examples.
 
-This module mirrors the Chapter 5 code listings in the book.
+This module mirrors the loss-function code listings in the book.
 """
 
 from __future__ import annotations
@@ -61,7 +61,7 @@ def cross_entropy_manual(logits: torch.Tensor, targets: torch.Tensor) -> torch.T
 
 
 class SuperResolutionNet(nn.Module):
-    """Minimal super-resolution model used in the Chapter 5 training example."""
+    """Minimal super-resolution model used in the book's loss-function example."""
 
     def __init__(self, upscale_factor: int = 2):
         super().__init__()

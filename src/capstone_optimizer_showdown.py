@@ -628,26 +628,21 @@ def load_cifar10():
     from sklearn.model_selection import train_test_split
     from sklearn.preprocessing import LabelEncoder
 
-    print("Loading CIFAR-10...")
     cifar = fetch_openml("CIFAR_10", version=1, as_frame=False)
-    X = cifar.data
-    y = cifar.target
-    if y.dtype.kind in ("U", "S", "O"):
-        y = LabelEncoder().fit_transform(y)
-    else:
-        y = y.astype(int)
-    X = X / 255.0
+    X = cifar.data / 255.0
+    y = LabelEncoder().fit_transform(cifar.target)
     y_onehot = np.zeros((len(y), 10))
     y_onehot[np.arange(len(y)), y] = 1
     X_temp, X_test, y_temp, y_test = train_test_split(
         X, y_onehot, test_size=0.1, random_state=42, stratify=y
     )
     X_train, X_val, y_train, y_val = train_test_split(
-        X_temp, y_temp, test_size=0.1111, random_state=42, stratify=np.argmax(y_temp, axis=1)
+        X_temp,
+        y_temp,
+        test_size=0.1111,
+        random_state=42,
+        stratify=np.argmax(y_temp, axis=1),
     )
-    print(f"Training samples: {len(X_train)}")
-    print(f"Validation samples: {len(X_val)}")
-    print(f"Test samples: {len(X_test)}")
     return X_train, X_val, X_test, y_train, y_val, y_test
 
 
