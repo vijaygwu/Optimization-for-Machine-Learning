@@ -626,7 +626,9 @@ def cosine_schedule(epoch, total_epochs, initial_lr, min_lr=1e-6):
     )
 
 
-def step_decay_schedule(epoch, initial_lr, drop_factor=0.1, drop_epochs=None):
+def step_decay_schedule(
+    epoch, initial_lr, drop_factor=0.1, drop_epochs=None
+):
     if drop_epochs is None:
         drop_epochs = [30, 60, 80]
     lr = initial_lr
@@ -693,7 +695,8 @@ def load_cifar10():
     X = cifar.data / 255.0
     y = LabelEncoder().fit_transform(cifar.target)
     y_onehot = np.zeros((len(y), 10))
-    y_onehot[np.arange(len(y)), y] = 1
+    class_indices = np.arange(len(y))
+    y_onehot[class_indices, y] = 1
     X_temp, X_test, y_temp, y_test = train_test_split(
         X, y_onehot, test_size=0.1, random_state=42, stratify=y
     )

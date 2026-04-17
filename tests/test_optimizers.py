@@ -362,6 +362,31 @@ def test_sgd_momentum_state_checkpoint():
     print("  - SGD momentum checkpoint/restore test passed")
 
 
+def test_checkpoint_restore_rejects_incompatible_parameters():
+    """Checkpoint restore should reject mismatched parameter counts and shapes."""
+    np.random.seed(789)
+    source_params = [np.random.randn(4, 3)]
+    source_opt = Adam([p.copy() for p in source_params], lr=0.001)
+    source_opt.step([np.random.randn(*source_params[0].shape)])
+    state_dict = source_opt.state_dict()
+
+    wrong_shape_opt = Adam([np.random.randn(5, 3)], lr=0.001)
+    try:
+        wrong_shape_opt.load_state_dict(state_dict)
+        assert False, "Shape mismatch should raise ValueError during checkpoint restore"
+    except ValueError as exc:
+        assert "Shape mismatch" in str(exc)
+
+    extra_param_opt = Adam([np.random.randn(4, 3), np.random.randn(2)], lr=0.001)
+    try:
+        extra_param_opt.load_state_dict(state_dict)
+        assert False, "Parameter count mismatch should raise ValueError during checkpoint restore"
+    except ValueError as exc:
+        assert "Parameter count mismatch" in str(exc)
+
+    print("  - Checkpoint compatibility validation test passed")
+
+
 def test_lr_scheduler_edge_cases():
     """Test edge cases in learning rate schedulers."""
     from src.optimizers import CosineAnnealingLR, StepLR, polynomial_lr, cosine_lr, warmup_lr
@@ -458,6 +483,7 @@ if __name__ == "__main__":
     test_adam_checkpoint_restores_across_processes()
     test_optimizers_require_explicit_gradient_lists()
     test_sgd_momentum_state_checkpoint()
+    test_checkpoint_restore_rejects_incompatible_parameters()
     test_lr_scheduler_edge_cases()
     test_convolutional_initialization_uses_kernel_area()
     print("\nAll tests passed!")

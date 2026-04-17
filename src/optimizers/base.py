@@ -127,7 +127,12 @@ class Optimizer(ABC):
         return {
             'state': packed_state,
             'param_groups': [{k: v for k, v in group.items() if k != 'params'}
-                           for group in self.param_groups]
+                           for group in self.param_groups],
+            'param_group_sizes': [len(group['params']) for group in self.param_groups],
+            'param_shapes': [
+                [list(param.shape) for param in group['params']]
+                for group in self.param_groups
+            ],
         }
 
     def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
@@ -138,8 +143,8 @@ class Optimizer(ABC):
             state_dict: Optimizer state dict from state_dict().
 
         Raises:
-            ValueError: If param group count in state_dict doesn't match current optimizer,
-                or if parameter counts or state shapes are incompatible.
+            ValueError: If param group count, parameter counts, or parameter
+                shapes in state_dict are incompatible with the current optimizer.
         """
         # Validate param groups match
         if len(state_dict['param_groups']) != len(self.param_groups):
@@ -148,27 +153,49 @@ class Optimizer(ABC):
                 f"param groups, but optimizer has {len(self.param_groups)}"
             )
 
-        # Validate parameter counts match within each group
-        for saved_group, current_group in zip(state_dict['param_groups'], self.param_groups):
-            if 'params' in saved_group and 'params' in current_group:
-                if len(saved_group['params']) != len(current_group['params']):
+        saved_group_sizes = state_dict.get('param_group_sizes')
+        if saved_group_sizes is not None:
+            if len(saved_group_sizes) != len(self.param_groups):
+                raise ValueError(
+                    f"Parameter group metadata mismatch: state_dict has {len(saved_group_sizes)} "
+                    f"group sizes, but optimizer has {len(self.param_groups)} groups"
+                )
+            for group_idx, (saved_count, current_group) in enumerate(
+                zip(saved_group_sizes, self.param_groups)
+            ):
+                current_count = len(current_group['params'])
+                if saved_count != current_count:
                     raise ValueError(
-                        f"Parameter count mismatch: saved {len(saved_group['params'])}, "
-                        f"current {len(current_group['params'])}"
+                        f"Parameter count mismatch for group {group_idx}: "
+                        f"saved {saved_count}, current {current_count}"
                     )
 
-        # Validate state shapes if states exist
-        for param_id, param_state in state_dict.get('state', {}).items():
-            if param_id in self.state:
-                for key, saved_val in param_state.items():
-                    if key in self.state[param_id]:
-                        current_val = self.state[param_id][key]
-                        if hasattr(saved_val, 'shape') and hasattr(current_val, 'shape'):
-                            if saved_val.shape != current_val.shape:
-                                raise ValueError(
-                                    f"Shape mismatch for state '{key}' of param {param_id}: "
-                                    f"saved {saved_val.shape}, current {current_val.shape}"
-                                )
+        saved_param_shapes = state_dict.get('param_shapes')
+        if saved_param_shapes is not None:
+            if len(saved_param_shapes) != len(self.param_groups):
+                raise ValueError(
+                    f"Parameter shape metadata mismatch: state_dict has {len(saved_param_shapes)} "
+                    f"groups, but optimizer has {len(self.param_groups)} groups"
+                )
+            for group_idx, (saved_shapes, current_group) in enumerate(
+                zip(saved_param_shapes, self.param_groups)
+            ):
+                current_params = current_group['params']
+                if len(saved_shapes) != len(current_params):
+                    raise ValueError(
+                        f"Parameter count mismatch for group {group_idx}: "
+                        f"saved {len(saved_shapes)}, current {len(current_params)}"
+                    )
+                for param_idx, (saved_shape, current_param) in enumerate(
+                    zip(saved_shapes, current_params)
+                ):
+                    current_shape = tuple(current_param.shape)
+                    saved_shape_tuple = tuple(saved_shape)
+                    if saved_shape_tuple != current_shape:
+                        raise ValueError(
+                            f"Shape mismatch for group {group_idx} param {param_idx}: "
+                            f"saved {saved_shape_tuple}, current {current_shape}"
+                        )
 
         # Load state
         self.state = {}
