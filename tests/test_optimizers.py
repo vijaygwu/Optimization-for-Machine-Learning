@@ -370,6 +370,20 @@ def test_lr_scheduler_edge_cases():
     lr = warmup_lr(step=5, warmup_steps=0, base_lr=0.1)
     assert lr == 0.1, "warmup_lr should return base_lr when warmup_steps=0"
 
+    # Zero-indexed warmup should take its first step immediately and hit
+    # base_lr on the final warmup step.
+    lr = warmup_lr(step=0, warmup_steps=4, base_lr=0.1)
+    assert abs(lr - 0.025) < 1e-12, "warmup_lr step 0 should be base_lr / warmup_steps"
+
+    lr = warmup_lr(step=3, warmup_steps=4, base_lr=0.1)
+    assert abs(lr - 0.1) < 1e-12, "warmup_lr should reach base_lr at step warmup_steps - 1"
+
+    lr = warmup_lr(step=0, warmup_steps=4, base_lr=0.1, warmup_init_lr=0.02)
+    assert abs(lr - 0.04) < 1e-12, "warmup_lr should interpolate from warmup_init_lr on step 0"
+
+    lr = warmup_lr(step=3, warmup_steps=4, base_lr=0.1, warmup_init_lr=0.02)
+    assert abs(lr - 0.1) < 1e-12, "warmup_lr with warmup_init_lr should still reach base_lr"
+
     # Test polynomial_lr with step beyond total_steps
     lr = polynomial_lr(step=100, total_steps=50, base_lr=0.1, end_lr=0.01)
     assert lr == 0.01, "polynomial_lr should return end_lr when step >= total_steps"
@@ -385,6 +399,9 @@ def test_lr_scheduler_edge_cases():
     # Test cosine_lr with edge cases
     lr = cosine_lr(step=0, total_steps=100, base_lr=0.1, warmup_steps=0)
     assert abs(lr - 0.1) < 1e-10, "cosine_lr at step 0 should be base_lr"
+
+    lr = cosine_lr(step=0, total_steps=10, base_lr=0.1, warmup_steps=4)
+    assert abs(lr - 0.025) < 1e-12, "cosine_lr warmup should share zero-indexed warmup convention"
 
     # Scheduler construction must not change LR before the first explicit step
     params = [np.array([1.0])]

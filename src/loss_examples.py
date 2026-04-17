@@ -146,7 +146,11 @@ def _default_vgg19_features() -> nn.Sequential:
         )
 
     model = tv_models.vgg19(weights=None)
-    state_dict = torch.load(checkpoint_path, map_location="cpu")
+    state_dict = torch.load(
+        checkpoint_path,
+        map_location="cpu",
+        weights_only=True,
+    )
     model.load_state_dict(state_dict)
     return model.features
 

@@ -143,7 +143,9 @@ def warmup_lr(
         step: Current training step (0-indexed).
         warmup_steps: Number of warmup steps.
         base_lr: Target learning rate after warmup.
-        warmup_init_lr: Initial learning rate at step 0.
+        warmup_init_lr: Warmup floor interpolated toward base_lr.
+            With zero-indexed warmup, step 0 already applies the first
+            warmup increment and step warmup_steps - 1 reaches base_lr.
 
     Returns:
         Learning rate for the current step.
@@ -157,8 +159,9 @@ def warmup_lr(
         return base_lr
 
     if step < warmup_steps:
-        # Linear warmup
-        return warmup_init_lr + (base_lr - warmup_init_lr) * step / warmup_steps
+        # Zero-indexed linear warmup: step 0 is the first increment and
+        # step warmup_steps - 1 reaches base_lr exactly.
+        return warmup_init_lr + (base_lr - warmup_init_lr) * (step + 1) / warmup_steps
     else:
         return base_lr
 
