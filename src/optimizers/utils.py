@@ -592,3 +592,199 @@ def check_gradients(
         return True, f"Warning: Possibly vanishing gradients: max={max_abs:.2e}"
 
     return True, f"Gradients OK: max={max_abs:.2e}, min_nonzero={min_abs:.2e}"
+
+
+# =============================================================================
+# Learning Rate Finder (PyTorch)
+# =============================================================================
+
+def lr_finder(model, train_loader, optimizer_class=None, criterion=None,
+              start_lr: float = 1e-8, end_lr: float = 10, num_steps: int = 100):
+    """
+    Learning rate range test to find optimal learning rate.
+
+    NOTE: This function saves and restores model state, so the model
+    is unchanged after the test completes.
+
+    Args:
+        model: PyTorch model to test
+        train_loader: DataLoader for training data
+        optimizer_class: Optimizer class (default: torch.optim.SGD)
+        criterion: Loss function (default: CrossEntropyLoss)
+        start_lr: Starting learning rate (very small)
+        end_lr: Ending learning rate (very large)
+        num_steps: Number of steps to test
+
+    Returns:
+        lrs: List of learning rates tested
+        losses: List of corresponding losses
+
+    Raises:
+        ValueError: If inputs are invalid
+        RuntimeError: If model parameters cannot be accessed
+
+    Example:
+        >>> lrs, losses = lr_finder(model, train_loader)
+        >>> plt.plot(lrs, losses)
+        >>> plt.xscale('log')
+        >>> plt.xlabel('Learning Rate')
+        >>> plt.ylabel('Loss')
+    """
+    try:
+        import torch
+        import torch.nn as nn
+    except ImportError:
+        raise ImportError("lr_finder requires PyTorch. Install with: pip install torch")
+
+    if optimizer_class is None:
+        optimizer_class = torch.optim.SGD
+
+    if criterion is None:
+        criterion = nn.CrossEntropyLoss()
+
+    # Validate num_steps
+    if num_steps < 2:
+        raise ValueError("num_steps must be at least 2")
+
+    # Validate learning rate range
+    if start_lr <= 0 or end_lr <= 0 or start_lr >= end_lr:
+        raise ValueError(f"Invalid LR range: [{start_lr}, {end_lr}]")
+
+    # Check model has parameters
+    try:
+        model_params = list(model.parameters())
+        if not model_params:
+            raise ValueError("Model has no learnable parameters")
+    except Exception as e:
+        raise RuntimeError(f"Cannot access model parameters: {e}")
+
+    # Guard against empty loader
+    if len(train_loader) == 0:
+        raise ValueError("train_loader is empty")
+
+    # CRITICAL: Save model state AND training mode before mutation
+    initial_state = {k: v.clone() for k, v in model.state_dict().items()}
+    was_training = model.training
+
+    try:
+        # Create optimizer with initial learning rate
+        optimizer = optimizer_class(model.parameters(), lr=start_lr)
+        lr_mult = (end_lr / start_lr) ** (1 / (num_steps - 1))
+
+        lrs, losses = [], []
+        best_loss = float('inf')
+        model.train()
+        data_iter = iter(train_loader)
+
+        # Infer device from model parameters
+        device = next(model.parameters()).device
+
+        for step in range(num_steps):
+            # Get batch (cycle through data if needed)
+            try:
+                inputs, targets = next(data_iter)
+            except StopIteration:
+                data_iter = iter(train_loader)
+                try:
+                    inputs, targets = next(data_iter)
+                except StopIteration:
+                    raise ValueError("train_loader produced no data")
+
+            # Move batch to model's device (critical for CUDA/MPS)
+            inputs, targets = inputs.to(device), targets.to(device)
+
+            # Forward pass
+            optimizer.zero_grad()
+            outputs = model(inputs)
+            loss = criterion(outputs, targets)
+
+            # Record learning rate and loss
+            current_lr = optimizer.param_groups[0]['lr']
+            lrs.append(current_lr)
+            losses.append(loss.item())
+
+            # Stop if loss explodes
+            if loss.item() > 4 * best_loss:
+                break
+            best_loss = min(best_loss, loss.item())
+
+            # Backward pass and update
+            loss.backward()
+            optimizer.step()
+
+            # Increase learning rate exponentially
+            for param_group in optimizer.param_groups:
+                param_group['lr'] *= lr_mult
+
+    finally:
+        # CRITICAL: Restore model state and training mode after test
+        model.load_state_dict(initial_state)
+        model.train(was_training)
+
+    return lrs, losses
+
+
+# =============================================================================
+# Random Hyperparameter Search
+# =============================================================================
+
+def random_hyperparameter_search(
+    train_fn: Callable,
+    n_trials: int = 20,
+    lr_range: Tuple[float, float] = (1e-5, 1e-2),
+    wd_range: Tuple[float, float] = (1e-6, 1e-2),
+    beta1_range: Tuple[float, float] = (0.85, 0.95),
+    beta2_range: Tuple[float, float] = (0.99, 0.9999),
+) -> Tuple[dict, float]:
+    """
+    Random hyperparameter search for optimizer settings.
+
+    Uses log-uniform sampling for learning rate and weight decay,
+    and uniform sampling for beta1 and beta2.
+
+    Args:
+        train_fn: Function that takes learning_rate, weight_decay, beta1, beta2
+                  as keyword arguments and returns validation loss.
+        n_trials: Number of random configurations to try.
+        lr_range: (min, max) range for learning rate (log-uniform).
+        wd_range: (min, max) range for weight decay (log-uniform).
+        beta1_range: (min, max) range for beta1 (uniform).
+        beta2_range: (min, max) range for beta2 (uniform).
+
+    Returns:
+        Tuple of (best_params dict, best_loss).
+
+    Raises:
+        TypeError: If train_fn does not return a numeric value.
+
+    Example:
+        >>> def train_fn(learning_rate, weight_decay, beta1, beta2):
+        ...     # Train model and return validation loss
+        ...     return val_loss
+        >>> best_params, best_loss = random_hyperparameter_search(train_fn, n_trials=50)
+    """
+    try:
+        from scipy.stats import loguniform
+    except ImportError:
+        raise ImportError("random_hyperparameter_search requires scipy. "
+                         "Install with: pip install scipy")
+
+    best_loss, best_params = float('inf'), None
+
+    for trial in range(n_trials):
+        params = {
+            'learning_rate': loguniform.rvs(lr_range[0], lr_range[1]),
+            'weight_decay': loguniform.rvs(wd_range[0], wd_range[1]),
+            'beta1': np.random.uniform(beta1_range[0], beta1_range[1]),
+            'beta2': np.random.uniform(beta2_range[0], beta2_range[1]),
+        }
+
+        val_loss = train_fn(**params)
+
+        if not isinstance(val_loss, (int, float)):
+            raise TypeError(f"train_fn must return a number, got {type(val_loss)}")
+
+        if val_loss < best_loss:
+            best_loss, best_params = val_loss, params
+
+    return best_params, best_loss

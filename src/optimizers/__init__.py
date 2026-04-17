@@ -64,6 +64,8 @@ from .utils import (
     flatten_grads,
     unflatten_grads,
     check_gradients,
+    lr_finder,
+    random_hyperparameter_search,
 )
 
 __all__ = [
@@ -100,6 +102,8 @@ __all__ = [
     'flatten_grads',
     'unflatten_grads',
     'check_gradients',
+    'lr_finder',
+    'random_hyperparameter_search',
 ]
 
 __version__ = '1.0.0'
