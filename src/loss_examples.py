@@ -168,6 +168,7 @@ class PerceptualLoss(nn.Module):
         normalize_features: bool = True,
         feature_extractor: Optional[nn.Sequential] = None,
         layer_indices: Optional[Mapping[str, int]] = None,
+        device: Optional[torch.device] = None,
     ):
         super().__init__()
 
@@ -211,6 +212,10 @@ class PerceptualLoss(nn.Module):
         self.register_buffer("mean", self.MEAN.clone())
         self.register_buffer("std", self.STD.clone())
 
+        # Move to device at init time instead of in forward() for performance
+        if device is not None:
+            self.to(device)
+
     def _validate_input(self, tensor: torch.Tensor) -> None:
         if tensor.ndim != 4:
             raise ValueError(f"expected 4D input (N, C, H, W), got {tensor.ndim}D")
@@ -236,8 +241,9 @@ class PerceptualLoss(nn.Module):
         self._validate_input(pred)
         self._validate_input(target)
 
-        if self.mean.device != pred.device:
-            self.to(pred.device)
+        # NOTE: Device moves should be done in __init__ or before training starts
+        # via explicit model.to(device) calls, not in the forward pass.
+        # Callers must ensure the model is on the correct device before inference.
 
         pred_features = self.extract_features(pred)
         with torch.no_grad():

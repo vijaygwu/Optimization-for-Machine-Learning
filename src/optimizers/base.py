@@ -45,8 +45,10 @@ class Optimizer(ABC):
             defaults: Default hyperparameters (lr, weight_decay, etc.)
         """
         self.defaults = defaults
-        self.state: Dict[int, Dict[str, Any]] = {}
+        self.state: Dict[str, Dict[str, Any]] = {}
         self.param_groups: List[Dict[str, Any]] = []
+        self._param_to_key: Dict[int, str] = {}  # Maps id(param) to stable key
+        self._next_param_idx = 0  # Counter for stable parameter keys
 
         # Convert params to list for consistent handling
         param_groups = list(params) if not isinstance(params, list) else params
@@ -133,11 +135,13 @@ class Optimizer(ABC):
         Args:
             state_dict: Optimizer state dict from state_dict().
         """
-        # Load state
+        # Load state - keys are now stable strings, not memory addresses
         self.state = {}
-        for idx, state in state_dict['state'].items():
-            self.state[int(idx)] = {k: v.copy() if isinstance(v, np.ndarray) else v
-                                   for k, v in state.items()}
+        for key, state in state_dict['state'].items():
+            # Support both old int-based keys (for backwards compatibility) and new string keys
+            state_key = str(key) if not isinstance(key, str) else key
+            self.state[state_key] = {k: v.copy() if isinstance(v, np.ndarray) else v
+                                     for k, v in state.items()}
 
         # Load param groups (except params themselves)
         for group, saved_group in zip(self.param_groups, state_dict['param_groups']):
@@ -168,9 +172,24 @@ class Optimizer(ABC):
             for group in self.param_groups:
                 group['lr'] = lr
 
-    def _get_param_id(self, param: np.ndarray) -> int:
-        """Get unique ID for a parameter array."""
-        return id(param)
+    def _get_param_key(self, param: np.ndarray) -> str:
+        """
+        Get a stable, deterministic key for a parameter array.
+
+        Unlike id(param) which changes across sessions, this returns
+        a stable string key based on parameter index that survives
+        checkpoint save/restore cycles.
+        """
+        param_id = id(param)
+        if param_id not in self._param_to_key:
+            # Assign a new stable key based on the order parameters were first seen
+            self._param_to_key[param_id] = f"param_{self._next_param_idx}"
+            self._next_param_idx += 1
+        return self._param_to_key[param_id]
+
+    def _get_param_id(self, param: np.ndarray) -> str:
+        """Get unique ID for a parameter array (deprecated, use _get_param_key)."""
+        return self._get_param_key(param)
 
     def _init_state(self, param: np.ndarray, param_id: int) -> Dict[str, Any]:
         """
