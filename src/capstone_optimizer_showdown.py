@@ -101,7 +101,7 @@ class SGD(Optimizer):
 
 
 class SGDMomentum(Optimizer):
-    def __init__(self, learning_rate=0.01, momentum=0.9):
+    def __init__(self, learning_rate=0.05, momentum=0.9):
         super().__init__(learning_rate)
         self.momentum = momentum
         self.velocity = None
@@ -219,18 +219,33 @@ def compute_accuracy(model, X, y):
     return np.mean(pred_classes == true_classes)
 
 
-def create_batches(X, y, batch_size, shuffle=True):
+def create_batches(X, y, batch_size, shuffle=True, epoch_seed=None):
     n_samples = len(X)
     indices = np.arange(n_samples)
     if shuffle:
-        np.random.shuffle(indices)
+        if epoch_seed is None:
+            np.random.shuffle(indices)
+        else:
+            rng = np.random.default_rng(epoch_seed)
+            rng.shuffle(indices)
     for start in range(0, n_samples, batch_size):
         end = min(start + batch_size, n_samples)
         batch_idx = indices[start:end]
         yield X[batch_idx], y[batch_idx]
 
 
-def train(model, optimizer, X_train, y_train, X_val, y_val, epochs=20, batch_size=128, verbose=True):
+def train(
+    model,
+    optimizer,
+    X_train,
+    y_train,
+    X_val,
+    y_val,
+    epochs=20,
+    batch_size=128,
+    verbose=True,
+    base_seed=42,
+):
     history = {
         "train_loss": [],
         "train_acc": [],
@@ -246,7 +261,10 @@ def train(model, optimizer, X_train, y_train, X_val, y_val, epochs=20, batch_siz
     for epoch in range(epochs):
         epoch_start = time.time()
         epoch_losses = []
-        for X_batch, y_batch in create_batches(X_train, y_train, batch_size):
+        epoch_seed = base_seed + epoch
+        for X_batch, y_batch in create_batches(
+            X_train, y_train, batch_size, epoch_seed=epoch_seed
+        ):
             logits = model.forward(X_batch)
             loss = model.cross_entropy_loss(logits, y_batch)
             epoch_losses.append(loss)
@@ -282,7 +300,7 @@ def run_optimizer_showdown():
     X_train, X_val, X_test, y_train, y_val, y_test = load_mnist()
     optimizers = [
         SGD(learning_rate=0.1),
-        SGDMomentum(learning_rate=0.01, momentum=0.9),
+        SGDMomentum(learning_rate=0.05, momentum=0.9),
         RMSprop(learning_rate=0.001, rho=0.99),
         Adam(learning_rate=0.001, beta1=0.9, beta2=0.999),
         AdamW(learning_rate=0.001, beta1=0.9, beta2=0.999, weight_decay=0.01),
@@ -487,7 +505,7 @@ def learning_rate_sensitivity(X_train, y_train, X_val, y_val):
     multipliers = [0.1, 0.3, 1.0, 3.0, 10.0]
     base_lrs = {
         "SGD": 0.1,
-        "SGD with Momentum": 0.01,
+        "SGD with Momentum": 0.05,
         "RMSprop": 0.001,
         "Adam": 0.001,
         "AdamW": 0.001,
@@ -732,7 +750,7 @@ class LAMB(Optimizer):
 
 
 def convergence_analysis(model, optimizer, X_train, y_train,
-                         X_val, y_val, epochs=50, batch_size=128):
+                         X_val, y_val, epochs=50, batch_size=128, base_seed=42):
     """
     Track metrics relevant to convergence theory:
     - Gradient norm decay
@@ -752,7 +770,10 @@ def convergence_analysis(model, optimizer, X_train, y_train,
         epoch_losses = []
         epoch_grad_norms = []
 
-        for X_batch, y_batch in create_batches(X_train, y_train, batch_size):
+        epoch_seed = base_seed + epoch
+        for X_batch, y_batch in create_batches(
+            X_train, y_train, batch_size, epoch_seed=epoch_seed
+        ):
             logits = model.forward(X_batch)
             loss = model.cross_entropy_loss(logits, y_batch)
             grads = model.backward(y_batch)
@@ -878,7 +899,7 @@ def compute_matched_comparison(X_train, y_train, X_val, y_val,
 
     optimizers = [
         SGD(learning_rate=0.1),
-        SGDMomentum(learning_rate=0.01, momentum=0.9),
+        SGDMomentum(learning_rate=0.05, momentum=0.9),
         RMSprop(learning_rate=0.001),
         Adam(learning_rate=0.001),
     ]
@@ -899,7 +920,10 @@ def compute_matched_comparison(X_train, y_train, X_val, y_val,
 
         while time.time() - start_time < time_budget_seconds:
             # Train one epoch
-            for X_batch, y_batch in create_batches(X_train, y_train, 128):
+            epoch_seed = 42 + epoch
+            for X_batch, y_batch in create_batches(
+                X_train, y_train, 128, epoch_seed=epoch_seed
+            ):
                 logits = model.forward(X_batch)
                 grads = model.backward(y_batch)
                 opt.step(model, grads)

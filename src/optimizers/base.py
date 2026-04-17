@@ -130,15 +130,18 @@ class Optimizer(ABC):
                            for group in self.param_groups]
         }
 
-    def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
+    def load_state_dict(self, state_dict: Dict[str, Any], validate_shapes: bool = True) -> None:
         """
         Load optimizer state.
 
         Args:
             state_dict: Optimizer state dict from state_dict().
+            validate_shapes: If True, validate that the number of parameters and
+                            their shapes match. Recommended to catch silent mismatches.
 
         Raises:
-            ValueError: If param group count in state_dict doesn't match current optimizer.
+            ValueError: If param group count doesn't match, or if validate_shapes=True
+                        and parameter count or shapes don't match.
         """
         # Validate param groups match
         if len(state_dict['param_groups']) != len(self.param_groups):
@@ -146,6 +149,40 @@ class Optimizer(ABC):
                 f"Param group count mismatch: state_dict has {len(state_dict['param_groups'])} "
                 f"param groups, but optimizer has {len(self.param_groups)}"
             )
+
+        # Validate parameter count per group
+        saved_state_count = len(state_dict['state'])
+        current_param_count = sum(len(group['params']) for group in self.param_groups)
+
+        if validate_shapes and saved_state_count != current_param_count:
+            raise ValueError(
+                f"Parameter count mismatch: saved state has {saved_state_count} parameters, "
+                f"but optimizer has {current_param_count}. "
+                f"Use validate_shapes=False to skip this check."
+            )
+
+        # Validate shapes match by extracting shape info from state keys
+        if validate_shapes:
+            saved_shapes = []
+            for key in sorted(state_dict['state'].keys()):
+                # Extract shape from key like 'group0:param0:shape10x5'
+                if ':shape' in key:
+                    shape_str = key.split(':shape')[-1]
+                    shape = tuple(int(d) for d in shape_str.split('x'))
+                    saved_shapes.append(shape)
+
+            current_shapes = []
+            for group in self.param_groups:
+                for param in group['params']:
+                    if hasattr(param, 'shape'):
+                        current_shapes.append(param.shape)
+
+            if saved_shapes and current_shapes and saved_shapes != current_shapes:
+                raise ValueError(
+                    f"Parameter shape mismatch: saved shapes {saved_shapes} != "
+                    f"current shapes {current_shapes}. "
+                    f"Use validate_shapes=False to skip this check."
+                )
 
         # Load state
         self.state = {}

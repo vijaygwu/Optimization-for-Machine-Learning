@@ -372,6 +372,7 @@ class NAdam(Optimizer):
             'step': 0,
             'exp_avg': np.zeros_like(param),
             'exp_avg_sq': np.zeros_like(param),
+            'mu_product': 1.0,  # Running product for O(1) momentum schedule
         }
 
     def step(self, grads: Optional[List[np.ndarray]] = None) -> None:
@@ -430,10 +431,9 @@ class NAdam(Optimizer):
 
                 # Nesterov-style update using current and next momentum
                 # This is the key difference from Adam
-                mu_product = 1.0
-                for i in range(1, step + 1):
-                    mu_i = beta1 * (1 - 0.5 * (0.96 ** (i * momentum_decay)))
-                    mu_product *= mu_i
+                # Maintain running product incrementally for O(1) per step (instead of O(T))
+                state['mu_product'] *= mu_t
+                mu_product = state['mu_product']
 
                 m_hat = (mu_t_next * exp_avg / (1 - mu_product * mu_t_next) +
                         (1 - mu_t) * grad / (1 - mu_product))

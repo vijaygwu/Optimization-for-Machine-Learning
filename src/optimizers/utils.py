@@ -781,7 +781,8 @@ def random_hyperparameter_search(
 
         val_loss = train_fn(**params)
 
-        if not isinstance(val_loss, (int, float)):
+        # Accept numpy scalars (e.g., numpy.float64) in addition to Python scalars
+        if not np.isscalar(val_loss):
             raise TypeError(f"train_fn must return a number, got {type(val_loss)}")
 
         if val_loss < best_loss:
