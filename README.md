@@ -11,8 +11,8 @@ Optimization-for-Machine-Learning/
 │   ├── ch02_gradient_descent.ipynb
 │   ├── ch03_stochastic_optimization.ipynb
 │   ├── ch04_advanced_optimizers.ipynb
-│   ├── ch05_regularization.ipynb
-│   ├── ch06_loss_functions.ipynb
+│   ├── ch05_loss_functions.ipynb
+│   ├── ch06_regularization.ipynb
 │   ├── ch07_convergence_analysis.ipynb
 │   ├── capstone_optimizer_showdown.ipynb
 │   ├── from_scratch_library.ipynb
@@ -43,8 +43,8 @@ Optimization-for-Machine-Learning/
 | 2 | Gradient Descent & Momentum | `ch02_gradient_descent.ipynb` |
 | 3 | Stochastic Optimization | `ch03_stochastic_optimization.ipynb` |
 | 4 | Advanced Optimizers | `ch04_advanced_optimizers.ipynb` |
-| 5 | Regularization | `ch05_regularization.ipynb` |
-| 6 | Loss Functions | `ch06_loss_functions.ipynb` |
+| 5 | Loss Functions | `ch05_loss_functions.ipynb` |
+| 6 | Regularization | `ch06_regularization.ipynb` |
 | 7 | Convergence Analysis | `ch07_convergence_analysis.ipynb` |
 
 ## Quick Start
@@ -90,7 +90,7 @@ optimizer.load_state_dict(state)  # Restore
 
 ### Loss Functions (`src/loss_examples.py`)
 
-Production-ready loss implementations for Chapter 6:
+Production-ready loss implementations for Chapter 5:
 
 ```python
 from src import PerceptualLoss, SuperResolutionNet
