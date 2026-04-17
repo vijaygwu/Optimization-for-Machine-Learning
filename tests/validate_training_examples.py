@@ -18,6 +18,8 @@ from src.training_examples import (  # noqa: E402
     cosine_schedule,
     cutout,
     get_adamw_with_warmup,
+    mixup,
+    warmup_cosine_schedule,
     warmup_schedule,
 )
 
@@ -38,6 +40,21 @@ def test_cutout_supports_chw_and_hwc() -> None:
     assert (hwc_aug == 0).any()
 
 
+def test_mixup_returns_soft_labels() -> None:
+    torch.manual_seed(0)
+    np.random.seed(0)
+
+    x = torch.arange(24, dtype=torch.float32).view(3, 2, 4)
+    y = torch.tensor([0, 1, 2], dtype=torch.long)
+
+    mixed_x, mixed_y = mixup(x, y, alpha=0.4, num_classes=3)
+
+    assert mixed_x.shape == x.shape
+    assert mixed_y.shape == (3, 3)
+    torch.testing.assert_close(mixed_y.sum(dim=1), torch.ones(3))
+    assert torch.all((mixed_y >= 0) & (mixed_y <= 1))
+
+
 def test_cosine_schedule_hits_min_lr() -> None:
     initial_lr = 1e-2
     min_lr = 1e-5
@@ -53,9 +70,35 @@ def test_cosine_schedule_hits_min_lr() -> None:
 def test_warmup_schedule_reaches_target_lr() -> None:
     initial_lr = 3e-4
     warmup_epochs = 5
+    assert np.isclose(warmup_schedule(0, 0, initial_lr), initial_lr)
+    assert np.isclose(warmup_schedule(7, 0, initial_lr), initial_lr)
     assert np.isclose(warmup_schedule(0, warmup_epochs, initial_lr), initial_lr / 5)
     assert np.isclose(warmup_schedule(4, warmup_epochs, initial_lr), initial_lr)
     assert np.isclose(warmup_schedule(7, warmup_epochs, initial_lr), initial_lr)
+
+
+def test_warmup_cosine_schedule_matches_zero_indexed_formula() -> None:
+    initial_lr = 1e-2
+    min_lr = 1e-5
+    total_epochs = 10
+    warmup_epochs = 3
+
+    assert np.isclose(
+        warmup_cosine_schedule(0, total_epochs, warmup_epochs, initial_lr, min_lr),
+        initial_lr / warmup_epochs,
+    )
+    assert np.isclose(
+        warmup_cosine_schedule(2, total_epochs, warmup_epochs, initial_lr, min_lr),
+        initial_lr,
+    )
+    assert np.isclose(
+        warmup_cosine_schedule(3, total_epochs, warmup_epochs, initial_lr, min_lr),
+        initial_lr,
+    )
+    assert np.isclose(
+        warmup_cosine_schedule(total_epochs - 1, total_epochs, warmup_epochs, initial_lr, min_lr),
+        min_lr,
+    )
 
 
 def test_adamw_with_warmup_scheduler_reaches_floor() -> None:
@@ -68,12 +111,18 @@ def test_adamw_with_warmup_scheduler_reaches_floor() -> None:
         warmup_init_lr_factor=1e-2,
     )
 
+    initial_lr = optimizer.param_groups[0]["lr"]
+    assert np.isclose(initial_lr, 1e-5)
+
     lrs = []
     for _ in range(8):
         optimizer.step()
         scheduler.step()
         lrs.append(optimizer.param_groups[0]["lr"])
 
+    assert np.isclose(lrs[0], 3.4e-4)
+    assert np.isclose(lrs[1], 6.7e-4)
+    assert np.isclose(lrs[2], 1e-3)
     assert max(lrs) <= 1e-3 + 1e-12
     assert np.isclose(lrs[-1], 0.0, atol=1e-12)
 
@@ -82,10 +131,14 @@ def main() -> None:
     print("Running Book 2 training-example validation...")
     test_cutout_supports_chw_and_hwc()
     print("  - cutout works for CHW tensors and HWC arrays")
+    test_mixup_returns_soft_labels()
+    print("  - mixup returns mixed inputs with valid soft labels")
     test_cosine_schedule_hits_min_lr()
     print("  - cosine schedule reaches min_lr on the final epoch")
     test_warmup_schedule_reaches_target_lr()
-    print("  - warmup schedule reaches the target LR cleanly")
+    print("  - warmup schedule handles zero warmup and reaches the target LR cleanly")
+    test_warmup_cosine_schedule_matches_zero_indexed_formula()
+    print("  - warmup cosine schedule matches the documented zero-indexed convention")
     test_adamw_with_warmup_scheduler_reaches_floor()
     print("  - AdamW warmup scheduler decays to its final floor")
     print("\nAll Book 2 training-example validations passed.")

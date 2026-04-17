@@ -33,6 +33,28 @@ def cutout(image, mask_size):
     return image_aug
 
 
+def mixup(x, y, alpha=0.2, num_classes=None):
+    """Apply mixup and always return soft labels."""
+    if alpha <= 0:
+        raise ValueError(f"alpha must be positive, got {alpha}")
+
+    if y.dim() == 1:
+        if num_classes is None:
+            raise ValueError(
+                "num_classes must be provided for integer labels. "
+                "Inferring from a batch is fragile."
+            )
+        y = torch.eye(num_classes, device=y.device)[y]
+
+    lam = np.random.beta(alpha, alpha)
+    batch_size = x.size(0)
+    index = torch.randperm(batch_size, device=x.device)
+
+    mixed_x = lam * x + (1 - lam) * x[index]
+    mixed_y = lam * y + (1 - lam) * y[index]
+    return mixed_x, mixed_y
+
+
 def cosine_schedule(epoch, total_epochs, initial_lr, min_lr=1e-6):
     """Cosine annealing schedule that reaches min_lr on the final epoch."""
     return min_lr + 0.5 * (initial_lr - min_lr) * (
@@ -50,19 +72,35 @@ def step_decay_schedule(epoch, initial_lr, drop_factor=0.1, drop_epochs=(30, 60,
 
 
 def warmup_schedule(epoch, warmup_epochs, initial_lr):
-    """Linear warmup for the first few epochs."""
+    """Zero-indexed linear warmup for the first few epochs."""
+    if warmup_epochs <= 0:
+        return initial_lr
     if epoch < warmup_epochs:
         return initial_lr * (epoch + 1) / warmup_epochs
     return initial_lr
+
+
+def warmup_cosine_schedule(epoch, total_epochs, warmup_epochs, initial_lr, min_lr=1e-6):
+    """Zero-indexed linear warmup followed by cosine annealing."""
+    if total_epochs <= 1:
+        return initial_lr
+    if epoch < warmup_epochs:
+        return warmup_schedule(epoch, warmup_epochs, initial_lr)
+    if total_epochs <= warmup_epochs:
+        return initial_lr
+    progress = (epoch - warmup_epochs) / max(1, total_epochs - warmup_epochs - 1)
+    progress = min(max(progress, 0.0), 1.0)
+    return min_lr + 0.5 * (initial_lr - min_lr) * (1 + math.cos(math.pi * progress))
 
 
 def get_adamw_with_warmup(model, lr=1e-4, weight_decay=0.01,
                           warmup_steps=1000, total_steps=100000,
                           warmup_init_lr_factor=1e-2):
     """AdamW with linear warmup followed by cosine decay."""
+    peak_lr = lr
     optimizer = AdamW(
         model.parameters(),
-        lr=lr,
+        lr=peak_lr,
         betas=(0.9, 0.999),
         eps=1e-8,
         weight_decay=weight_decay,
@@ -77,7 +115,7 @@ def get_adamw_with_warmup(model, lr=1e-4, weight_decay=0.01,
             return 0.5 * (1.0 + math.cos(math.pi * progress))
 
         if step < warmup_steps:
-            warmup_progress = step / max(1, warmup_steps - 1)
+            warmup_progress = step / max(1, warmup_steps)
             return warmup_init_lr_factor + (1.0 - warmup_init_lr_factor) * warmup_progress
 
         progress = (step - warmup_steps) / max(1, total_steps - warmup_steps - 1)
@@ -85,6 +123,10 @@ def get_adamw_with_warmup(model, lr=1e-4, weight_decay=0.01,
         return 0.5 * (1.0 + math.cos(math.pi * progress))
 
     scheduler = LambdaLR(optimizer, lr_lambda)
+    if warmup_steps > 0:
+        initial_lr = peak_lr * warmup_init_lr_factor
+        for param_group in optimizer.param_groups:
+            param_group["lr"] = initial_lr
     return optimizer, scheduler
 
 
@@ -92,6 +134,8 @@ __all__ = [
     "cosine_schedule",
     "cutout",
     "get_adamw_with_warmup",
+    "mixup",
     "step_decay_schedule",
+    "warmup_cosine_schedule",
     "warmup_schedule",
 ]

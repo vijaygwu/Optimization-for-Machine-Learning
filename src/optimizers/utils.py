@@ -173,11 +173,13 @@ def cosine_lr(
     """
     Compute learning rate with cosine annealing and optional warmup.
 
+    At step == total_steps - 1 (the final step), returns exactly min_lr.
+
     Args:
         step: Current training step (0-indexed).
         total_steps: Total number of training steps.
         base_lr: Maximum learning rate (after warmup).
-        min_lr: Minimum learning rate.
+        min_lr: Minimum learning rate (reached at final step).
         warmup_steps: Number of warmup steps.
 
     Returns:
@@ -186,9 +188,17 @@ def cosine_lr(
     if step < warmup_steps:
         return warmup_lr(step, warmup_steps, base_lr)
 
-    # Cosine annealing
-    progress = (step - warmup_steps) / max(1, total_steps - warmup_steps)
-    progress = min(1.0, progress)  # Cap at 1.0
+    # Beyond total_steps: clamp to min_lr
+    if step >= total_steps:
+        return min_lr
+
+    # Cosine annealing: progress goes from 0 to 1 over decay phase
+    decay_steps = total_steps - warmup_steps
+    if decay_steps <= 1:
+        return min_lr
+
+    progress = (step - warmup_steps) / (decay_steps - 1)
+    progress = min(1.0, progress)
 
     return min_lr + 0.5 * (base_lr - min_lr) * (1 + np.cos(np.pi * progress))
 
@@ -214,15 +224,30 @@ def polynomial_lr(
 
     Returns:
         Learning rate for the current step.
+
+    Raises:
+        ValueError: If total_steps <= warmup_steps (no decay steps).
     """
     if step < warmup_steps:
         return warmup_lr(step, warmup_steps, base_lr)
 
     decay_steps = total_steps - warmup_steps
+
+    # Edge case: no decay steps available
+    if decay_steps <= 0:
+        raise ValueError(
+            f"total_steps ({total_steps}) must be greater than warmup_steps ({warmup_steps}) "
+            "to allow for polynomial decay."
+        )
+
     step_offset = step - warmup_steps
 
+    # Edge case: step beyond total_steps - return end_lr
+    if step_offset >= decay_steps:
+        return end_lr
+
     decay_factor = (1 - step_offset / decay_steps) ** power
-    decay_factor = max(0.0, decay_factor)
+    # decay_factor is guaranteed non-negative due to the check above
 
     return end_lr + (base_lr - end_lr) * decay_factor
 
@@ -248,7 +273,15 @@ def exponential_lr(
 
     Returns:
         Learning rate for the current step.
+
+    Raises:
+        ValueError: If decay_steps <= 0 or decay_rate <= 0.
     """
+    if decay_steps <= 0:
+        raise ValueError(f"decay_steps must be positive, got {decay_steps}")
+    if decay_rate <= 0:
+        raise ValueError(f"decay_rate must be positive, got {decay_rate}")
+
     if staircase:
         exponent = step // decay_steps
     else:
@@ -324,6 +357,37 @@ def get_lr_scheduler(
     return scheduler
 
 
+def _compute_fans(shape: Tuple[int, ...]) -> Tuple[int, int]:
+    """
+    Compute fan_in and fan_out for weight initialization.
+
+    Handles both linear layers (2D) and convolutional layers (4D).
+
+    Args:
+        shape: Shape of the weight tensor.
+            - 1D: (features,) -> fan_in = fan_out = features
+            - 2D: (out_features, in_features) -> fan_in = in_features, fan_out = out_features
+            - 4D: (out_channels, in_channels, kH, kW) -> fan_in = in_channels * kH * kW
+
+    Returns:
+        Tuple of (fan_in, fan_out).
+    """
+    if len(shape) < 2:
+        # 1D tensor (e.g., bias)
+        return shape[0], shape[0]
+    elif len(shape) == 2:
+        # Linear layer: (out_features, in_features)
+        fan_out, fan_in = shape[0], shape[1]
+    else:
+        # Convolutional layer: (out_channels, in_channels, *kernel_size)
+        # Receptive field size = product of spatial dimensions
+        receptive_field_size = int(np.prod(shape[2:]))
+        fan_in = shape[1] * receptive_field_size
+        fan_out = shape[0] * receptive_field_size
+
+    return fan_in, fan_out
+
+
 def initialize_parameters(
     shape: Tuple[int, ...],
     init_type: str = 'xavier_uniform',
@@ -377,40 +441,22 @@ def initialize_parameters(
         return np.random.normal(mean, std, shape) * gain
 
     elif init_type == 'xavier_uniform':
-        if len(shape) < 2:
-            fan_in = fan_out = shape[0]
-        else:
-            fan_in = shape[1] if len(shape) > 1 else shape[0]
-            fan_out = shape[0]
-
+        fan_in, fan_out = _compute_fans(shape)
         bound = gain * np.sqrt(6.0 / (fan_in + fan_out))
         return np.random.uniform(-bound, bound, shape)
 
     elif init_type == 'xavier_normal':
-        if len(shape) < 2:
-            fan_in = fan_out = shape[0]
-        else:
-            fan_in = shape[1] if len(shape) > 1 else shape[0]
-            fan_out = shape[0]
-
+        fan_in, fan_out = _compute_fans(shape)
         std = gain * np.sqrt(2.0 / (fan_in + fan_out))
         return np.random.normal(0, std, shape)
 
     elif init_type == 'he_uniform':
-        if len(shape) < 2:
-            fan_in = shape[0]
-        else:
-            fan_in = shape[1] if len(shape) > 1 else shape[0]
-
+        fan_in, _ = _compute_fans(shape)
         bound = gain * np.sqrt(6.0 / fan_in)
         return np.random.uniform(-bound, bound, shape)
 
     elif init_type == 'he_normal':
-        if len(shape) < 2:
-            fan_in = shape[0]
-        else:
-            fan_in = shape[1] if len(shape) > 1 else shape[0]
-
+        fan_in, _ = _compute_fans(shape)
         std = gain * np.sqrt(2.0 / fan_in)
         return np.random.normal(0, std, shape)
 
@@ -477,12 +523,21 @@ def unflatten_grads(
 
     Returns:
         List of gradient arrays with original shapes.
+
+    Raises:
+        ValueError: If flat_grads length doesn't match the total size of shapes.
     """
+    expected_size = sum(int(np.prod(shape)) for shape in shapes)
+    if flat_grads.size != expected_size:
+        raise ValueError(
+            f"flat_grads has {flat_grads.size} elements, but shapes require {expected_size}"
+        )
+
     grads = []
     offset = 0
 
     for shape in shapes:
-        size = np.prod(shape)
+        size = int(np.prod(shape))
         grads.append(flat_grads[offset:offset+size].reshape(shape))
         offset += size
 

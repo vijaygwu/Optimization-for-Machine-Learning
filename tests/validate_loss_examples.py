@@ -1,4 +1,4 @@
-"""Validation script for the Chapter 6 loss-function companion code."""
+"""Validation script for the Chapter 14 loss-function companion code."""
 
 from __future__ import annotations
 
@@ -123,8 +123,36 @@ def test_perceptual_training_step_updates_generator() -> None:
         assert max(deltas) > 0.0
 
 
+def test_perceptual_loss_matches_manual_layer_average() -> None:
+    feature_extractor = nn.Sequential(
+        nn.Identity(),
+        nn.Identity(),
+    )
+    perceptual_loss = PerceptualLoss(
+        layers=("identity",),
+        weights=[0.5],
+        feature_extractor=feature_extractor,
+        layer_indices={"identity": 1},
+    )
+
+    pred = torch.tensor(
+        [[[[1.0, 3.0]], [[2.0, 4.0]], [[5.0, 7.0]]]],
+        dtype=torch.float32,
+    )
+    target = torch.tensor(
+        [[[[0.0, 1.0]], [[2.0, 1.0]], [[1.0, 2.0]]]],
+        dtype=torch.float32,
+    )
+
+    actual = perceptual_loss(pred, target)
+    pred_norm = perceptual_loss.normalize(pred)
+    target_norm = perceptual_loss.normalize(target)
+    manual = 0.5 * (((pred_norm - target_norm) ** 2).mean() / pred.size(1))
+    torch.testing.assert_close(actual, manual)
+
+
 def main() -> None:
-    print("Running Chapter 6 loss-example validation...")
+    print("Running Chapter 14 loss-example validation...")
     test_cross_entropy_manual_matches_pytorch_hard_labels()
     print("  - hard-label cross-entropy matches PyTorch")
     test_cross_entropy_manual_matches_pytorch_soft_labels()
@@ -133,7 +161,9 @@ def main() -> None:
     print("  - paired super-resolution dataset loads matching LR/HR files")
     test_perceptual_training_step_updates_generator()
     print("  - perceptual training step updates generator weights")
-    print("\nAll Chapter 6 validations passed.")
+    test_perceptual_loss_matches_manual_layer_average()
+    print("  - perceptual layer scaling matches the manual mean-and-channel formula")
+    print("\nAll Chapter 14 validations passed.")
 
 
 if __name__ == "__main__":

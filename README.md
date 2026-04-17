@@ -68,10 +68,10 @@ jupyter notebook notebooks/
 ## Requirements
 
 - Python 3.9+
-- PyTorch 2.0+ (for loss_examples and some notebooks)
-- NumPy, Matplotlib, Jupyter
+- PyTorch 2.0+ (for `src/loss_examples.py`, `src/training_examples.py`, and some notebooks)
+- NumPy, SciPy, Matplotlib, Jupyter
 
-**Note:** The `src/optimizers` module is NumPy-based and works without PyTorch. PyTorch is only required for `src/loss_examples.py` and the Chapter 6 notebook.
+**Note:** The `src/optimizers` module is NumPy-based and works without PyTorch. PyTorch is required for `src/loss_examples.py`, `src/training_examples.py`, and the notebook examples that import those modules.
 
 ## Key Features
 
@@ -80,7 +80,7 @@ jupyter notebook notebooks/
 Clean, educational implementations of major optimizers:
 
 ```python
-from src.optimizers import SGD, Adam, AdamW, RMSprop, AdaGrad
+from src.optimizers import SGD, Adam, AdamW, RMSprop, Adagrad
 
 # All optimizers support checkpointing with stable parameter keys
 optimizer = AdamW(params, lr=1e-3, weight_decay=0.01)
@@ -110,11 +110,11 @@ Common training patterns:
 from src import warmup_schedule, cosine_schedule, cutout
 
 # Learning rate schedules
-lr = warmup_schedule(step, warmup_steps=1000, base_lr=1e-3)
-lr = cosine_schedule(step, total_steps=10000, base_lr=1e-3)
+lr = warmup_schedule(epoch=3, warmup_epochs=5, initial_lr=1e-3)
+lr = cosine_schedule(epoch=10, total_epochs=100, initial_lr=1e-3)
 
 # Data augmentation
-augmented = cutout(image, n_holes=1, length=16)
+augmented = cutout(image, mask_size=16)
 ```
 
 ## Capstone Project

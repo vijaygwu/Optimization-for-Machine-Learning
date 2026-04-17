@@ -1,4 +1,4 @@
-"""Runnable companion code for Chapter 14 (Loss Functions) examples.
+"""Runnable companion code for Chapter 14 loss-function examples.
 
 This module mirrors the Chapter 14 code listings in the book.
 """
@@ -133,18 +133,31 @@ def _default_vgg19_features() -> nn.Sequential:
         )
 
     weights_enum = getattr(tv_models, "VGG19_Weights", None)
+    checkpoint_name = "vgg19-dcbb9e9d.pth"
     if weights_enum is not None:
-        return tv_models.vgg19(weights=weights_enum.DEFAULT).features
-    return tv_models.vgg19(pretrained=True).features
+        checkpoint_name = weights_enum.DEFAULT.url.rsplit("/", 1)[-1]
+
+    checkpoint_path = Path(torch.hub.get_dir()) / "checkpoints" / checkpoint_name
+    if not checkpoint_path.exists():
+        raise RuntimeError(
+            "Default PerceptualLoss expects locally cached VGG19 ImageNet "
+            f"weights at {checkpoint_path}. Pre-download the checkpoint or "
+            "pass a custom feature_extractor for an offline fallback."
+        )
+
+    model = tv_models.vgg19(weights=None)
+    state_dict = torch.load(checkpoint_path, map_location="cpu")
+    model.load_state_dict(state_dict)
+    return model.features
 
 
 class PerceptualLoss(nn.Module):
     """
     Perceptual loss using a frozen feature extractor.
 
-    By default this uses pretrained VGG19 features, but tests and lightweight
-    examples can inject a smaller ``feature_extractor`` and corresponding
-    ``layer_indices`` mapping.
+    By default this uses locally cached pretrained VGG19 features. Tests and
+    lightweight offline examples can inject a smaller ``feature_extractor``
+    and corresponding ``layer_indices`` mapping instead.
     """
 
     DEFAULT_LAYER_INDICES = {
@@ -168,7 +181,6 @@ class PerceptualLoss(nn.Module):
         normalize_features: bool = True,
         feature_extractor: Optional[nn.Sequential] = None,
         layer_indices: Optional[Mapping[str, int]] = None,
-        device: Optional[torch.device] = None,
     ):
         super().__init__()
 
@@ -212,10 +224,6 @@ class PerceptualLoss(nn.Module):
         self.register_buffer("mean", self.MEAN.clone())
         self.register_buffer("std", self.STD.clone())
 
-        # Move to device at init time instead of in forward() for performance
-        if device is not None:
-            self.to(device)
-
     def _validate_input(self, tensor: torch.Tensor) -> None:
         if tensor.ndim != 4:
             raise ValueError(f"expected 4D input (N, C, H, W), got {tensor.ndim}D")
@@ -241,9 +249,9 @@ class PerceptualLoss(nn.Module):
         self._validate_input(pred)
         self._validate_input(target)
 
-        # NOTE: Device moves should be done in __init__ or before training starts
-        # via explicit model.to(device) calls, not in the forward pass.
-        # Callers must ensure the model is on the correct device before inference.
+        # Note: caller must ensure this module is on the correct device
+        # before calling forward(). Use .to(device) at initialization time,
+        # not here in the hot path.
 
         pred_features = self.extract_features(pred)
         with torch.no_grad():
@@ -253,8 +261,10 @@ class PerceptualLoss(nn.Module):
         for layer, weight in zip(self.layers, self.weights):
             pred_layer = pred_features[layer]
             target_layer = target_features[layer]
+            # ``reduction='mean'`` already divides by N * C * H * W.
             layer_loss = F.mse_loss(pred_layer, target_layer)
             if self.normalize_features:
+                # Optionally downweight wider layers by their channel count.
                 layer_loss = layer_loss / pred_layer.size(1)
             loss = loss + weight * layer_loss
 

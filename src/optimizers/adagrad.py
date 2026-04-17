@@ -123,13 +123,13 @@ class Adagrad(Optimizer):
             raise ValueError("Adagrad requires gradients to be passed explicitly")
 
         grad_idx = 0
-        for group in self.param_groups:
+        for group_idx, group in enumerate(self.param_groups):
             lr = group['lr']
             lr_decay = group['lr_decay']
             eps = group['eps']
             weight_decay = group['weight_decay']
 
-            for param in group['params']:
+            for param_idx, param in enumerate(group['params']):
                 if grad_idx >= len(grads):
                     raise ValueError("Not enough gradients provided")
 
@@ -139,11 +139,8 @@ class Adagrad(Optimizer):
                 if grad is None:
                     continue
 
-                # Prevent overflow in accumulator
-                grad = np.clip(grad, -1e6, 1e6)
-
                 # Get or initialize state
-                param_id = self._get_param_id(param)
+                param_id = self._get_param_id(param, group_idx, param_idx)
                 if param_id not in self.state:
                     self.state[param_id] = self._init_state(param, param_id)
                 state = self.state[param_id]
@@ -183,13 +180,13 @@ class AdagradSparse(Adagrad):
             raise ValueError("AdagradSparse requires gradients")
 
         grad_idx = 0
-        for group in self.param_groups:
+        for group_idx, group in enumerate(self.param_groups):
             lr = group['lr']
             lr_decay = group['lr_decay']
             eps = group['eps']
             weight_decay = group['weight_decay']
 
-            for param in group['params']:
+            for param_idx, param in enumerate(group['params']):
                 if grad_idx >= len(grads):
                     raise ValueError("Not enough gradients provided")
 
@@ -199,7 +196,7 @@ class AdagradSparse(Adagrad):
                 if grad is None:
                     continue
 
-                param_id = self._get_param_id(param)
+                param_id = self._get_param_id(param, group_idx, param_idx)
                 if param_id not in self.state:
                     self.state[param_id] = self._init_state(param, param_id)
                 state = self.state[param_id]
@@ -300,13 +297,13 @@ class Adadelta(Optimizer):
             raise ValueError("Adadelta requires gradients")
 
         grad_idx = 0
-        for group in self.param_groups:
+        for group_idx, group in enumerate(self.param_groups):
             lr = group['lr']
             rho = group['rho']
             eps = group['eps']
             weight_decay = group['weight_decay']
 
-            for param in group['params']:
+            for param_idx, param in enumerate(group['params']):
                 if grad_idx >= len(grads):
                     raise ValueError("Not enough gradients provided")
 
@@ -316,7 +313,7 @@ class Adadelta(Optimizer):
                 if grad is None:
                     continue
 
-                param_id = self._get_param_id(param)
+                param_id = self._get_param_id(param, group_idx, param_idx)
                 if param_id not in self.state:
                     self.state[param_id] = self._init_state(param, param_id)
                 state = self.state[param_id]

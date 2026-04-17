@@ -38,8 +38,7 @@ class RMSprop(Optimizer):
         w_{t+1} = w_t - lr * g_t / (sqrt(v_centered_t) + eps)
 
     Attributes:
-        lr (float): Learning rate (default: 0.01). Note: Book examples use
-            0.001 for stability; 0.01 is common in research literature.
+        lr (float): Learning rate (default: 0.01).
         alpha (float): Smoothing constant / decay rate (default: 0.99).
         eps (float): Term for numerical stability (default: 1e-8).
         weight_decay (float): L2 regularization coefficient (default: 0).
@@ -129,7 +128,7 @@ class RMSprop(Optimizer):
             raise ValueError("RMSprop requires gradients to be passed explicitly")
 
         grad_idx = 0
-        for group in self.param_groups:
+        for group_idx, group in enumerate(self.param_groups):
             lr = group['lr']
             alpha = group['alpha']
             eps = group['eps']
@@ -137,7 +136,7 @@ class RMSprop(Optimizer):
             momentum = group['momentum']
             centered = group['centered']
 
-            for param in group['params']:
+            for param_idx, param in enumerate(group['params']):
                 if grad_idx >= len(grads):
                     raise ValueError("Not enough gradients provided")
 
@@ -148,7 +147,7 @@ class RMSprop(Optimizer):
                     continue
 
                 # Get or initialize state
-                param_id = self._get_param_id(param)
+                param_id = self._get_param_id(param, group_idx, param_idx)
                 if param_id not in self.state:
                     self.state[param_id] = self._init_state(param, param_id)
                 state = self.state[param_id]
@@ -206,7 +205,7 @@ class RMSpropTF(RMSprop):
             raise ValueError("RMSpropTF requires gradients to be passed explicitly")
 
         grad_idx = 0
-        for group in self.param_groups:
+        for group_idx, group in enumerate(self.param_groups):
             lr = group['lr']
             alpha = group['alpha']
             eps = group['eps']
@@ -214,7 +213,7 @@ class RMSpropTF(RMSprop):
             momentum = group['momentum']
             centered = group['centered']
 
-            for param in group['params']:
+            for param_idx, param in enumerate(group['params']):
                 if grad_idx >= len(grads):
                     raise ValueError("Not enough gradients provided")
 
@@ -224,7 +223,7 @@ class RMSpropTF(RMSprop):
                 if grad is None:
                     continue
 
-                param_id = self._get_param_id(param)
+                param_id = self._get_param_id(param, group_idx, param_idx)
                 if param_id not in self.state:
                     self.state[param_id] = self._init_state(param, param_id)
                 state = self.state[param_id]

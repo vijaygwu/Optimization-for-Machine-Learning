@@ -28,11 +28,15 @@ class SGD(Optimizer):
         v_t = momentum * v_{t-1} + g_t
         w_{t+1} = w_t - lr * v_t
 
-    With Nesterov momentum:
-        v_t = momentum * v_{t-1} + g_t
-        w_{t+1} = w_t - lr * (momentum * v_t + g_t)
+    With PyTorch-style Nesterov momentum:
+        b_t = momentum * b_{t-1} + g_t
+        u_t = g_t + momentum * b_t
+        w_{t+1} = w_t - lr * u_t
 
     Where g_t is the gradient and w_t are the parameters.
+    This practical buffer form is motivated by look-ahead gradients, but it is
+    not identical to evaluating grad(w_t - lr * momentum * b_{t-1}) on
+    general nonlinear objectives.
 
     Attributes:
         lr (float): Learning rate.
@@ -128,14 +132,14 @@ class SGD(Optimizer):
             raise ValueError("SGD requires gradients to be passed explicitly")
 
         grad_idx = 0
-        for group in self.param_groups:
+        for group_idx, group in enumerate(self.param_groups):
             lr = group['lr']
             momentum = group['momentum']
             weight_decay = group['weight_decay']
             dampening = group['dampening']
             nesterov = group['nesterov']
 
-            for param in group['params']:
+            for param_idx, param in enumerate(group['params']):
                 if grad_idx >= len(grads):
                     raise ValueError("Not enough gradients provided")
 
@@ -146,7 +150,7 @@ class SGD(Optimizer):
                     continue
 
                 # Get or initialize state
-                param_id = self._get_param_id(param)
+                param_id = self._get_param_id(param, group_idx, param_idx)
                 if param_id not in self.state:
                     self.state[param_id] = self._init_state(param, param_id)
                 state = self.state[param_id]
@@ -168,7 +172,7 @@ class SGD(Optimizer):
                         buf += (1 - dampening) * grad
 
                     if nesterov:
-                        # Nesterov: look ahead in the momentum direction
+                        # PyTorch-style Nesterov buffer correction.
                         grad = grad + momentum * buf
                     else:
                         grad = buf
@@ -202,14 +206,14 @@ class SGDW(SGD):
             raise ValueError("SGDW requires gradients to be passed explicitly")
 
         grad_idx = 0
-        for group in self.param_groups:
+        for group_idx, group in enumerate(self.param_groups):
             lr = group['lr']
             momentum = group['momentum']
             weight_decay = group['weight_decay']
             dampening = group['dampening']
             nesterov = group['nesterov']
 
-            for param in group['params']:
+            for param_idx, param in enumerate(group['params']):
                 if grad_idx >= len(grads):
                     raise ValueError("Not enough gradients provided")
 
@@ -220,7 +224,7 @@ class SGDW(SGD):
                     continue
 
                 # Get or initialize state
-                param_id = self._get_param_id(param)
+                param_id = self._get_param_id(param, group_idx, param_idx)
                 if param_id not in self.state:
                     self.state[param_id] = self._init_state(param, param_id)
                 state = self.state[param_id]
@@ -236,6 +240,7 @@ class SGDW(SGD):
                         buf += (1 - dampening) * grad
 
                     if nesterov:
+                        # PyTorch-style Nesterov buffer correction.
                         grad = grad + momentum * buf
                     else:
                         grad = buf

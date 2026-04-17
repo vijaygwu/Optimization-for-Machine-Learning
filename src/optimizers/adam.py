@@ -114,14 +114,14 @@ class Adam(Optimizer):
             raise ValueError("Adam requires gradients to be passed explicitly")
 
         grad_idx = 0
-        for group in self.param_groups:
+        for group_idx, group in enumerate(self.param_groups):
             lr = group['lr']
             beta1, beta2 = group['betas']
             eps = group['eps']
             weight_decay = group['weight_decay']
             amsgrad = group['amsgrad']
 
-            for param in group['params']:
+            for param_idx, param in enumerate(group['params']):
                 if grad_idx >= len(grads):
                     raise ValueError("Not enough gradients provided")
 
@@ -132,7 +132,7 @@ class Adam(Optimizer):
                     continue
 
                 # Get or initialize state
-                param_id = self._get_param_id(param)
+                param_id = self._get_param_id(param, group_idx, param_idx)
                 if param_id not in self.state:
                     self.state[param_id] = self._init_state(param, param_id)
                 state = self.state[param_id]
@@ -248,14 +248,14 @@ class AdamW(Optimizer):
             raise ValueError("AdamW requires gradients to be passed explicitly")
 
         grad_idx = 0
-        for group in self.param_groups:
+        for group_idx, group in enumerate(self.param_groups):
             lr = group['lr']
             beta1, beta2 = group['betas']
             eps = group['eps']
             weight_decay = group['weight_decay']
             amsgrad = group['amsgrad']
 
-            for param in group['params']:
+            for param_idx, param in enumerate(group['params']):
                 if grad_idx >= len(grads):
                     raise ValueError("Not enough gradients provided")
 
@@ -266,7 +266,7 @@ class AdamW(Optimizer):
                     continue
 
                 # Get or initialize state
-                param_id = self._get_param_id(param)
+                param_id = self._get_param_id(param, group_idx, param_idx)
                 if param_id not in self.state:
                     self.state[param_id] = self._init_state(param, param_id)
                 state = self.state[param_id]
@@ -368,14 +368,14 @@ class NAdam(Optimizer):
             raise ValueError("NAdam requires gradients to be passed explicitly")
 
         grad_idx = 0
-        for group in self.param_groups:
+        for group_idx, group in enumerate(self.param_groups):
             lr = group['lr']
             beta1, beta2 = group['betas']
             eps = group['eps']
             weight_decay = group['weight_decay']
             momentum_decay = group['momentum_decay']
 
-            for param in group['params']:
+            for param_idx, param in enumerate(group['params']):
                 if grad_idx >= len(grads):
                     raise ValueError("Not enough gradients provided")
 
@@ -386,7 +386,7 @@ class NAdam(Optimizer):
                     continue
 
                 # Get or initialize state
-                param_id = self._get_param_id(param)
+                param_id = self._get_param_id(param, group_idx, param_idx)
                 if param_id not in self.state:
                     self.state[param_id] = self._init_state(param, param_id)
                 state = self.state[param_id]

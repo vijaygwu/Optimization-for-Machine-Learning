@@ -1,42 +1,41 @@
-"""Companion code exports for Optimization for Machine Learning.
+"""Companion code exports for the Book 2 optimization examples.
 
-This module uses lazy imports for torch-dependent components to avoid
-ImportError when torch is not installed (e.g., when using only the
-numpy-based optimizers).
+This module uses lazy imports to avoid pulling in torch-dependent code
+when only lightweight utilities are needed. Optimizer-only users can
+import without torch installed.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-# Lazy import helpers for torch-dependent modules
-def __getattr__(name: str):
-    """Lazy import torch-dependent symbols on first access."""
-    _torch_symbols = {
-        "PairedSuperResolutionDataset",
-        "PerceptualLoss",
-        "SuperResolutionNet",
-        "cross_entropy_manual",
-        "select_device",
-    }
-    _training_symbols = {
-        "cosine_schedule",
-        "cutout",
-        "get_adamw_with_warmup",
-        "step_decay_schedule",
-        "warmup_schedule",
-    }
+# Lazy imports for ALL external-dependency modules
+_LAZY_MODULES = {
+    # torch-dependent (loss_examples)
+    "PairedSuperResolutionDataset": "loss_examples",
+    "PerceptualLoss": "loss_examples",
+    "SuperResolutionNet": "loss_examples",
+    "cross_entropy_manual": "loss_examples",
+    "select_device": "loss_examples",
+    # torch-dependent (training_examples)
+    "cosine_schedule": "training_examples",
+    "cutout": "training_examples",
+    "get_adamw_with_warmup": "training_examples",
+    "mixup": "training_examples",
+    "step_decay_schedule": "training_examples",
+    "warmup_cosine_schedule": "training_examples",
+    "warmup_schedule": "training_examples",
+}
 
-    if name in _torch_symbols:
-        from . import loss_examples
-        return getattr(loss_examples, name)
-    elif name in _training_symbols:
-        from . import training_examples
-        return getattr(training_examples, name)
+def __getattr__(name: str):
+    """Lazy import for torch-dependent symbols."""
+    if name in _LAZY_MODULES:
+        module_name = _LAZY_MODULES[name]
+        import importlib
+        module = importlib.import_module(f".{module_name}", __package__)
+        return getattr(module, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
-
-# For static type checkers - these imports are never executed at runtime
 if TYPE_CHECKING:
     from .loss_examples import (
         PairedSuperResolutionDataset,
@@ -49,7 +48,9 @@ if TYPE_CHECKING:
         cosine_schedule,
         cutout,
         get_adamw_with_warmup,
+        mixup,
         step_decay_schedule,
+        warmup_cosine_schedule,
         warmup_schedule,
     )
 
@@ -61,7 +62,9 @@ __all__ = [
     "cross_entropy_manual",
     "cutout",
     "get_adamw_with_warmup",
+    "mixup",
     "select_device",
     "step_decay_schedule",
+    "warmup_cosine_schedule",
     "warmup_schedule",
 ]

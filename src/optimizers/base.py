@@ -2,7 +2,8 @@
 Base Optimizer Class
 
 This module provides the abstract base class for all optimization algorithms.
-It follows PyTorch's optimizer API design for familiarity and compatibility.
+It keeps PyTorch-like parameter groups and state dictionaries for familiarity,
+but these NumPy implementations require gradients to be passed explicitly.
 
 Author: Optimization for Machine Learning Book
 License: MIT
@@ -18,7 +19,8 @@ class Optimizer(ABC):
     Abstract base class for all optimizers.
 
     This class provides the interface and common functionality shared by
-    all optimization algorithms. It follows the PyTorch optimizer API design.
+    all optimization algorithms. It uses a PyTorch-inspired structure, but
+    concrete subclasses expect explicit gradient lists on every step.
 
     Attributes:
         param_groups (List[Dict]): List of parameter groups, each containing
@@ -47,8 +49,6 @@ class Optimizer(ABC):
         self.defaults = defaults
         self.state: Dict[str, Dict[str, Any]] = {}
         self.param_groups: List[Dict[str, Any]] = []
-        self._param_to_key: Dict[int, str] = {}  # Maps id(param) to stable key
-        self._next_param_idx = 0  # Counter for stable parameter keys
 
         # Convert params to list for consistent handling
         param_groups = list(params) if not isinstance(params, list) else params
@@ -93,8 +93,10 @@ class Optimizer(ABC):
         Perform a single optimization step.
 
         Args:
-            grads: Optional list of gradients. If None, assumes gradients
-                are stored in parameter.grad attributes (for torch-like usage).
+            grads: Gradient list matching the optimizer parameter order.
+                Passing ``None`` is unsupported in these NumPy optimizers;
+                concrete subclasses raise ``ValueError`` when gradients are
+                omitted.
         """
         raise NotImplementedError
 
@@ -105,8 +107,8 @@ class Optimizer(ABC):
         This is typically called before computing new gradients to prevent
         gradient accumulation across iterations.
         """
-        # For numpy arrays, we don't have .grad attributes
-        # This method is provided for API compatibility
+        # NumPy parameters do not store .grad attributes.
+        # This method is provided for API familiarity only.
         pass
 
     def state_dict(self) -> Dict[str, Any]:
@@ -134,14 +136,25 @@ class Optimizer(ABC):
 
         Args:
             state_dict: Optimizer state dict from state_dict().
+
+        Raises:
+            ValueError: If param group count in state_dict doesn't match current optimizer.
         """
-        # Load state - keys are now stable strings, not memory addresses
+        # Validate param groups match
+        if len(state_dict['param_groups']) != len(self.param_groups):
+            raise ValueError(
+                f"Param group count mismatch: state_dict has {len(state_dict['param_groups'])} "
+                f"param groups, but optimizer has {len(self.param_groups)}"
+            )
+
+        # Load state
         self.state = {}
-        for key, state in state_dict['state'].items():
-            # Support both old int-based keys (for backwards compatibility) and new string keys
-            state_key = str(key) if not isinstance(key, str) else key
-            self.state[state_key] = {k: v.copy() if isinstance(v, np.ndarray) else v
-                                     for k, v in state.items()}
+        for idx, state in state_dict['state'].items():
+            param_id = str(idx)
+            self.state[param_id] = {
+                k: v.copy() if isinstance(v, np.ndarray) else v
+                for k, v in state.items()
+            }
 
         # Load param groups (except params themselves)
         for group, saved_group in zip(self.param_groups, state_dict['param_groups']):
@@ -172,32 +185,25 @@ class Optimizer(ABC):
             for group in self.param_groups:
                 group['lr'] = lr
 
-    def _get_param_key(self, param: np.ndarray) -> str:
+    def _get_param_id(self, param: np.ndarray, group_idx: int, param_idx: int) -> str:
         """
-        Get a stable, deterministic key for a parameter array.
+        Get unique ID for a parameter array.
 
-        Uses position-based keys (group_idx, param_idx) that are stable
-        across sessions, unlike id(param) which changes.
+        Uses a deterministic hash based on position in param_groups rather than
+        id(param), which changes across sessions and would break checkpoint resume.
+
+        Args:
+            param: The parameter array.
+            group_idx: Index of the parameter group.
+            param_idx: Index of the parameter within its group.
+
+        Returns:
+            Deterministic string ID for this parameter.
         """
-        param_id = id(param)
-        if param_id not in self._param_to_key:
-            # Find the parameter's position in param_groups
-            for group_idx, group in enumerate(self.param_groups):
-                for param_idx, p in enumerate(group['params']):
-                    if p is param:
-                        key = f"g{group_idx}_p{param_idx}"
-                        self._param_to_key[param_id] = key
-                        return key
-            # Fallback: shouldn't happen, but use counter if param not found
-            self._param_to_key[param_id] = f"param_{self._next_param_idx}"
-            self._next_param_idx += 1
-        return self._param_to_key[param_id]
+        shape_key = "x".join(str(dim) for dim in param.shape)
+        return f"group{group_idx}:param{param_idx}:shape{shape_key}"
 
-    def _get_param_id(self, param: np.ndarray) -> str:
-        """Get unique ID for a parameter array (deprecated, use _get_param_key)."""
-        return self._get_param_key(param)
-
-    def _init_state(self, param: np.ndarray, param_id: int) -> Dict[str, Any]:
+    def _init_state(self, param: np.ndarray, param_id: str) -> Dict[str, Any]:
         """
         Initialize state for a parameter.
 
@@ -240,15 +246,22 @@ class LRScheduler(ABC):
         Args:
             optimizer: The optimizer to modify.
             last_epoch: Index of last epoch. Use -1 to start from beginning.
+                        Note: Unlike PyTorch, we do NOT call step() on init.
+                        This avoids modifying the LR before the first training step.
+                        Call scheduler.step() AFTER each epoch's training.
         """
         self.optimizer = optimizer
-        self.last_epoch = last_epoch
         self.base_lrs = [group['lr'] for group in optimizer.param_groups]
 
-        # Step once if starting fresh
+        # Initialize last_epoch to -1 (before any training)
+        # The first call to step() will increment to 0 and set the initial LR
+        # NOTE: We intentionally do NOT call step() here to avoid changing LR
+        # before training starts. This differs from PyTorch's behavior which
+        # calls step() on init, causing a confusing initial LR change.
         if last_epoch == -1:
-            self.last_epoch = 0
-            self.step()
+            self.last_epoch = -1
+        else:
+            self.last_epoch = last_epoch
 
     @abstractmethod
     def get_lr(self) -> List[float]:
@@ -308,10 +321,15 @@ class StepLR(LRScheduler):
         """
         Args:
             optimizer: Wrapped optimizer.
-            step_size: Period of learning rate decay.
+            step_size: Period of learning rate decay. Must be > 0.
             gamma: Multiplicative factor of learning rate decay.
             last_epoch: Index of last epoch.
+
+        Raises:
+            ValueError: If step_size <= 0.
         """
+        if step_size <= 0:
+            raise ValueError(f"step_size must be positive, got {step_size}")
         self.step_size = step_size
         self.gamma = gamma
         super().__init__(optimizer, last_epoch)
@@ -338,16 +356,22 @@ class CosineAnnealingLR(LRScheduler):
         """
         Args:
             optimizer: Wrapped optimizer.
-            T_max: Maximum number of iterations.
+            T_max: Maximum number of iterations. Must be > 0.
             eta_min: Minimum learning rate.
             last_epoch: Index of last epoch.
+
+        Raises:
+            ValueError: If T_max <= 0.
         """
+        if T_max <= 0:
+            raise ValueError(f"T_max must be positive, got {T_max}")
         self.T_max = T_max
         self.eta_min = eta_min
         super().__init__(optimizer, last_epoch)
 
     def get_lr(self) -> List[float]:
         """Compute current learning rates."""
+        # Guard against division by zero (T_max validated in __init__)
         return [self.eta_min + (base_lr - self.eta_min) *
                 (1 + np.cos(np.pi * self.last_epoch / self.T_max)) / 2
                 for base_lr in self.base_lrs]
