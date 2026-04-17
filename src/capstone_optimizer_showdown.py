@@ -220,12 +220,30 @@ def compute_accuracy(model, X, y):
 
 
 def create_batches(X, y, batch_size, shuffle=True, epoch_seed=None):
+    """
+    Generate minibatches for training.
+
+    Args:
+        X: Input features
+        y: Target labels
+        batch_size: Number of samples per batch
+        shuffle: Whether to shuffle the data
+        epoch_seed: If provided, uses a local RNG seeded with this value for
+            deterministic shuffling. This is critical for fair optimizer
+            comparisons - all optimizers see identical batch orderings when
+            using the same epoch_seed sequence.
+
+    Yields:
+        (X_batch, y_batch) tuples
+    """
     n_samples = len(X)
     indices = np.arange(n_samples)
     if shuffle:
         if epoch_seed is None:
+            # Non-deterministic shuffle (uses global RNG state)
             np.random.shuffle(indices)
         else:
+            # Deterministic shuffle (isolated local RNG for reproducibility)
             rng = np.random.default_rng(epoch_seed)
             rng.shuffle(indices)
     for start in range(0, n_samples, batch_size):
@@ -297,6 +315,17 @@ def train(
 
 
 def run_optimizer_showdown():
+    """
+    Run a fair head-to-head comparison of optimizers on MNIST.
+
+    Fairness guarantees:
+    1. All optimizers start from identical initial weights (saved and restored)
+    2. All optimizers see identical epoch-by-epoch batch permutations
+       (via deterministic seeding in create_batches with base_seed=42)
+    3. Each optimizer's internal state is reset before training
+
+    This ensures the comparison measures optimizer performance, not shuffle luck.
+    """
     X_train, X_val, X_test, y_train, y_val, y_test = load_mnist()
     optimizers = [
         SGD(learning_rate=0.1),
@@ -305,17 +334,28 @@ def run_optimizer_showdown():
         Adam(learning_rate=0.001, beta1=0.9, beta2=0.999),
         AdamW(learning_rate=0.001, beta1=0.9, beta2=0.999, weight_decay=0.01),
     ]
+
+    # Save initial weights - all optimizers will start from this checkpoint
     base_model = MLP(seed=42)
     initial_params = base_model.copy_params()
+
     all_results = {}
     trained_models = {}
+
+    # Fixed seed for batch shuffling - ensures all optimizers see same data order
+    training_seed = 42
+
     for opt in optimizers:
         print(f"\n{'='*60}")
         print(f"Training with {opt.get_name()}")
         print(f"{'='*60}")
+
+        # Reset to identical starting point for fair comparison
         model = MLP(seed=42)
         model.set_params([p.copy() for p in initial_params])
         opt.reset()
+
+        # Train with deterministic batch ordering (same for all optimizers)
         history = train(
             model,
             opt,
@@ -325,6 +365,7 @@ def run_optimizer_showdown():
             y_val,
             epochs=20,
             batch_size=128,
+            base_seed=training_seed,  # Ensures identical batch order across optimizers
         )
         all_results[opt.get_name()] = history
         trained_models[opt.get_name()] = model
