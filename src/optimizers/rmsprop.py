@@ -38,7 +38,8 @@ class RMSprop(Optimizer):
         w_{t+1} = w_t - lr * g_t / (sqrt(v_centered_t) + eps)
 
     Attributes:
-        lr (float): Learning rate (default: 0.01).
+        lr (float): Learning rate (default: 0.01). Note: Book examples use
+            0.001 for stability; 0.01 is common in research literature.
         alpha (float): Smoothing constant / decay rate (default: 0.99).
         eps (float): Term for numerical stability (default: 1e-8).
         weight_decay (float): L2 regularization coefficient (default: 0).

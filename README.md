@@ -18,8 +18,8 @@ Optimization-for-Machine-Learning/
 ## Chapters Covered
 
 1. **Convex Optimization** - Convex sets, convex functions, optimality conditions
-2. **Stochastic Optimization** - SGD fundamentals, mini-batch training, variance reduction
-3. **Gradient Descent** - Vanilla GD, convergence analysis, step size selection
+2. **Gradient Descent** - Vanilla GD, momentum, Nesterov acceleration
+3. **Stochastic Optimization** - SGD fundamentals, mini-batch training, variance reduction
 4. **Advanced Optimizers** - Momentum, RMSprop, Adam, AdaGrad
 5. **Regularization** - L1/L2 penalties, dropout, early stopping
 6. **Loss Functions** - Cross-entropy, MSE, contrastive losses, custom losses
