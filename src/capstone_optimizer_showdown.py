@@ -190,13 +190,29 @@ class Adam(Optimizer):
 
 
 def load_mnist():
-    from sklearn.datasets import fetch_openml
+    from sklearn.datasets import fetch_openml, load_digits
     from sklearn.model_selection import train_test_split
 
     print("Loading MNIST dataset...")
-    mnist = fetch_openml("mnist_784", version=1, as_frame=False, parser="liac-arff")
-    X, y = mnist.data, mnist.target.astype(int)
-    X = X / 255.0
+    try:
+        mnist = fetch_openml("mnist_784", version=1, as_frame=False)
+        X, y = mnist.data, mnist.target.astype(int)
+        X = X / 255.0
+        dataset_name = "MNIST"
+    except Exception as e:
+        # Offline-safe fallback: upsample sklearn's bundled digits to the
+        # 28x28 shape expected by the capstone MLP.
+        print(
+            f"  OpenML unavailable ({type(e).__name__}); using "
+            "sklearn digits upsampled to 28x28 for offline smoke testing"
+        )
+        digits = load_digits()
+        X = digits.data.reshape(-1, 8, 8).astype(np.float64) / 16.0
+        X = np.kron(X, np.ones((1, 3, 3)))
+        X = np.pad(X, ((0, 0), (2, 2), (2, 2)), mode="constant")
+        X = X.reshape(len(X), -1)
+        y = digits.target
+        dataset_name = "sklearn digits (upsampled to 28x28)"
     y_onehot = np.zeros((len(y), 10))
     y_onehot[np.arange(len(y)), y] = 1
     X_temp, X_test, y_temp, y_test = train_test_split(
@@ -208,6 +224,7 @@ def load_mnist():
     print(f"Training samples: {len(X_train)}")
     print(f"Validation samples: {len(X_val)}")
     print(f"Test samples: {len(X_test)}")
+    print(f"Dataset source: {dataset_name}")
     return X_train, X_val, X_test, y_train, y_val, y_test
 
 
@@ -688,13 +705,27 @@ class AdamW(Adam):
 
 
 def load_cifar10():
-    from sklearn.datasets import fetch_openml
+    from sklearn.datasets import fetch_openml, load_digits
     from sklearn.model_selection import train_test_split
     from sklearn.preprocessing import LabelEncoder
 
-    cifar = fetch_openml("CIFAR_10", version=1, as_frame=False)
-    X = cifar.data / 255.0
-    y = LabelEncoder().fit_transform(cifar.target)
+    try:
+        cifar = fetch_openml("CIFAR_10", version=1, as_frame=False)
+        X = cifar.data / 255.0
+        y = LabelEncoder().fit_transform(cifar.target)
+    except Exception as e:
+        # Offline-safe fallback: upsample sklearn digits to 32x32 and repeat
+        # across RGB channels so the feature shape matches CIFAR-10.
+        print(
+            f"  OpenML unavailable ({type(e).__name__}); using "
+            "sklearn digits upsampled to 32x32x3 for offline smoke testing"
+        )
+        digits = load_digits()
+        X = digits.data.reshape(-1, 8, 8).astype(np.float64) / 16.0
+        X = np.kron(X, np.ones((1, 4, 4)))
+        X = np.repeat(X[:, :, :, None], 3, axis=3)
+        X = X.reshape(len(X), -1)
+        y = digits.target
     y_onehot = np.zeros((len(y), 10))
     class_indices = np.arange(len(y))
     y_onehot[class_indices, y] = 1
@@ -917,14 +948,27 @@ def load_fashion_mnist():
     Load Fashion-MNIST for more challenging evaluation.
     Same format as MNIST but harder classification task.
     """
-    from sklearn.datasets import fetch_openml
+    from sklearn.datasets import fetch_openml, load_digits
     from sklearn.model_selection import train_test_split
 
     print("Loading Fashion-MNIST...")
-    fmnist = fetch_openml('Fashion-MNIST', version=1, as_frame=False)
-    X, y = fmnist.data, fmnist.target.astype(int)
-
-    X = X / 255.0
+    try:
+        fmnist = fetch_openml('Fashion-MNIST', version=1, as_frame=False)
+        X, y = fmnist.data, fmnist.target.astype(int)
+        X = X / 255.0
+    except Exception as e:
+        # Offline-safe fallback for smoke tests. The published extension still
+        # targets true Fashion-MNIST when network/cache access is available.
+        print(
+            f"  OpenML unavailable ({type(e).__name__}); using "
+            "sklearn digits upsampled to 28x28 for offline smoke testing"
+        )
+        digits = load_digits()
+        X = digits.data.reshape(-1, 8, 8).astype(np.float64) / 16.0
+        X = np.kron(X, np.ones((1, 3, 3)))
+        X = np.pad(X, ((0, 0), (2, 2), (2, 2)), mode="constant")
+        X = X.reshape(len(X), -1)
+        y = digits.target
     y_onehot = np.zeros((len(y), 10))
     y_onehot[np.arange(len(y)), y] = 1
 
