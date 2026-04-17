@@ -12,7 +12,7 @@ _repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _repo_root not in sys.path:
     sys.path.insert(0, _repo_root)
 
-from src.optimizers import SGD, Adam, RMSprop, Adagrad
+from src.optimizers import SGD, Adam, AdamW, RMSprop, Adagrad
 
 def test_sgd_updates_in_correct_direction():
     """Test that SGD moves parameters in negative gradient direction."""
@@ -31,6 +31,93 @@ def test_adam_bias_correction():
     opt.step(grads)
     # First step should have significant update due to bias correction
     assert abs(params[0][0]) > 0.0005, "Adam should update on first step"
+
+
+def test_rmsprop_state_respects_param_group_overrides():
+    """RMSprop state layout must follow each parameter group's options."""
+    params = [np.array([1.0]), np.array([1.0])]
+    opt = RMSprop(
+        [
+            {"params": [params[0]], "momentum": 0.9},
+            {"params": [params[1]], "centered": True},
+        ],
+        lr=0.01,
+        momentum=0.0,
+        centered=False,
+    )
+
+    opt.step([np.array([1.0]), np.array([1.0])])
+
+    state0 = opt.state[opt._get_param_id(params[0], 0, 0)]
+    state1 = opt.state[opt._get_param_id(params[1], 1, 0)]
+
+    assert "momentum_buffer" in state0
+    assert "momentum_buffer" not in state1
+    assert "grad_avg" not in state0
+    assert "grad_avg" in state1
+
+
+def test_adam_amsgrad_state_respects_param_group_overrides():
+    """Adam must initialize AMSGrad state per parameter group."""
+    params = [np.array([0.0]), np.array([0.0])]
+    opt = Adam(
+        [
+            {"params": [params[0]]},
+            {"params": [params[1]], "amsgrad": True},
+        ],
+        lr=0.001,
+        amsgrad=False,
+    )
+
+    opt.step([np.array([1.0]), np.array([1.0])])
+
+    state0 = opt.state[opt._get_param_id(params[0], 0, 0)]
+    state1 = opt.state[opt._get_param_id(params[1], 1, 0)]
+
+    assert "max_exp_avg_sq" not in state0
+    assert "max_exp_avg_sq" in state1
+
+
+def test_adamw_amsgrad_state_respects_param_group_overrides():
+    """AdamW must initialize AMSGrad state per parameter group."""
+    params = [np.array([0.0]), np.array([0.0])]
+    opt = AdamW(
+        [
+            {"params": [params[0]]},
+            {"params": [params[1]], "amsgrad": True},
+        ],
+        lr=0.001,
+        amsgrad=False,
+    )
+
+    opt.step([np.array([1.0]), np.array([1.0])])
+
+    state0 = opt.state[opt._get_param_id(params[0], 0, 0)]
+    state1 = opt.state[opt._get_param_id(params[1], 1, 0)]
+
+    assert "max_exp_avg_sq" not in state0
+    assert "max_exp_avg_sq" in state1
+
+
+def test_adagrad_initial_accumulator_respects_param_group_overrides():
+    """Adagrad accumulators must honor per-group initialization values."""
+    params = [np.array([0.0]), np.array([0.0])]
+    opt = Adagrad(
+        [
+            {"params": [params[0]]},
+            {"params": [params[1]], "initial_accumulator_value": 0.5},
+        ],
+        lr=0.1,
+        initial_accumulator_value=0.0,
+    )
+
+    opt.step([np.array([1.0]), np.array([1.0])])
+
+    state0 = opt.state[opt._get_param_id(params[0], 0, 0)]
+    state1 = opt.state[opt._get_param_id(params[1], 1, 0)]
+
+    np.testing.assert_allclose(state0["sum"], np.array([1.0]))
+    np.testing.assert_allclose(state1["sum"], np.array([1.5]))
 
 def test_momentum_accumulation():
     """Test that momentum accumulates over steps."""

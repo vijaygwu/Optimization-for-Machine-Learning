@@ -105,15 +105,21 @@ class RMSprop(Optimizer):
         }
         super().__init__(params, defaults)
 
-    def _init_state(self, param: np.ndarray, param_id: int) -> Dict[str, Any]:
+    def _init_state(
+        self,
+        param: np.ndarray,
+        param_id: int,
+        group: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
         """Initialize optimizer state for a parameter."""
+        group = self.defaults if group is None else group
         state = {
             'step': 0,
             'square_avg': np.zeros_like(param),  # Running avg of squared gradients
         }
-        if self.defaults['momentum'] > 0:
+        if group['momentum'] > 0:
             state['momentum_buffer'] = np.zeros_like(param)
-        if self.defaults['centered']:
+        if group['centered']:
             state['grad_avg'] = np.zeros_like(param)  # Running avg of gradients
         return state
 
@@ -149,7 +155,7 @@ class RMSprop(Optimizer):
                 # Get or initialize state
                 param_id = self._get_param_id(param, group_idx, param_idx)
                 if param_id not in self.state:
-                    self.state[param_id] = self._init_state(param, param_id)
+                    self.state[param_id] = self._init_state(param, param_id, group)
                 state = self.state[param_id]
                 state['step'] += 1
 
@@ -225,7 +231,7 @@ class RMSpropTF(RMSprop):
 
                 param_id = self._get_param_id(param, group_idx, param_idx)
                 if param_id not in self.state:
-                    self.state[param_id] = self._init_state(param, param_id)
+                    self.state[param_id] = self._init_state(param, param_id, group)
                 state = self.state[param_id]
                 state['step'] += 1
 

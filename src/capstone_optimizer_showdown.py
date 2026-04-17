@@ -1,0 +1,646 @@
+"""Runnable companion code for the Book 2 optimizer-showdown capstone."""
+
+from __future__ import annotations
+
+import matplotlib.pyplot as plt
+import numpy as np
+
+
+class MLP:
+    def __init__(self, seed=42):
+        rng = np.random.default_rng(seed)
+        self.W1 = rng.standard_normal((784, 256)) * np.sqrt(2.0 / 784)
+        self.b1 = np.zeros((1, 256))
+        self.W2 = rng.standard_normal((256, 128)) * np.sqrt(2.0 / 256)
+        self.b2 = np.zeros((1, 128))
+        self.W3 = rng.standard_normal((128, 10)) * np.sqrt(2.0 / 128)
+        self.b3 = np.zeros((1, 10))
+        self.cache = {}
+
+    def relu(self, x):
+        return np.maximum(0, x)
+
+    def relu_derivative(self, x):
+        return (x > 0).astype(float)
+
+    def softmax(self, x):
+        exp_x = np.exp(x - np.max(x, axis=1, keepdims=True))
+        return exp_x / np.sum(exp_x, axis=1, keepdims=True)
+
+    def forward(self, X):
+        self.cache["z1"] = X @ self.W1 + self.b1
+        self.cache["a1"] = self.relu(self.cache["z1"])
+        self.cache["z2"] = self.cache["a1"] @ self.W2 + self.b2
+        self.cache["a2"] = self.relu(self.cache["z2"])
+        self.cache["z3"] = self.cache["a2"] @ self.W3 + self.b3
+        self.cache["X"] = X
+        return self.cache["z3"]
+
+    def backward(self, y_true):
+        batch_size = y_true.shape[0]
+        grads = {}
+        probs = self.softmax(self.cache["z3"])
+        dz3 = probs - y_true
+        grads["W3"] = self.cache["a2"].T @ dz3 / batch_size
+        grads["b3"] = np.mean(dz3, axis=0, keepdims=True)
+        da2 = dz3 @ self.W3.T
+        dz2 = da2 * self.relu_derivative(self.cache["z2"])
+        grads["W2"] = self.cache["a1"].T @ dz2 / batch_size
+        grads["b2"] = np.mean(dz2, axis=0, keepdims=True)
+        da1 = dz2 @ self.W2.T
+        dz1 = da1 * self.relu_derivative(self.cache["z1"])
+        grads["W1"] = self.cache["X"].T @ dz1 / batch_size
+        grads["b1"] = np.mean(dz1, axis=0, keepdims=True)
+        return grads
+
+    def cross_entropy_loss(self, logits, y_true):
+        shifted = logits - np.max(logits, axis=1, keepdims=True)
+        log_probs = shifted - np.log(np.sum(np.exp(shifted), axis=1, keepdims=True))
+        return -np.mean(np.sum(y_true * log_probs, axis=1))
+
+    def predict_proba(self, X):
+        return self.softmax(self.forward(X))
+
+    def get_params(self):
+        return [self.W1, self.b1, self.W2, self.b2, self.W3, self.b3]
+
+    def set_params(self, params):
+        self.W1, self.b1, self.W2, self.b2, self.W3, self.b3 = params
+
+    def copy_params(self):
+        return [p.copy() for p in self.get_params()]
+
+
+class Optimizer:
+    def __init__(self, learning_rate):
+        self.lr = learning_rate
+
+    def step(self, model, grads):
+        raise NotImplementedError("Subclasses must implement step()")
+
+    def reset(self):
+        pass
+
+    def get_name(self):
+        return self.__class__.__name__
+
+
+class SGD(Optimizer):
+    def __init__(self, learning_rate=0.01):
+        super().__init__(learning_rate)
+
+    def step(self, model, grads):
+        param_names = ["W1", "b1", "W2", "b2", "W3", "b3"]
+        params = model.get_params()
+        for i, name in enumerate(param_names):
+            params[i] = params[i] - self.lr * grads[name]
+        model.set_params(params)
+
+
+class SGDMomentum(Optimizer):
+    def __init__(self, learning_rate=0.01, momentum=0.9):
+        super().__init__(learning_rate)
+        self.momentum = momentum
+        self.velocity = None
+
+    def step(self, model, grads):
+        param_names = ["W1", "b1", "W2", "b2", "W3", "b3"]
+        params = model.get_params()
+        if self.velocity is None:
+            self.velocity = {}
+            for i, name in enumerate(param_names):
+                self.velocity[name] = np.zeros_like(params[i])
+        for i, name in enumerate(param_names):
+            self.velocity[name] = self.momentum * self.velocity[name] + grads[name]
+            params[i] = params[i] - self.lr * self.velocity[name]
+        model.set_params(params)
+
+    def reset(self):
+        self.velocity = None
+
+    def get_name(self):
+        return f"SGD with Momentum(momentum={self.momentum})"
+
+
+class RMSprop(Optimizer):
+    def __init__(self, learning_rate=0.001, rho=0.99, epsilon=1e-8):
+        super().__init__(learning_rate)
+        self.rho = rho
+        self.epsilon = epsilon
+        self.cache = None
+
+    def step(self, model, grads):
+        param_names = ["W1", "b1", "W2", "b2", "W3", "b3"]
+        params = model.get_params()
+        if self.cache is None:
+            self.cache = {}
+            for name in param_names:
+                self.cache[name] = np.zeros_like(grads[name])
+        for i, name in enumerate(param_names):
+            self.cache[name] = self.rho * self.cache[name] + (1 - self.rho) * grads[name] ** 2
+            params[i] = params[i] - self.lr * grads[name] / (
+                np.sqrt(self.cache[name]) + self.epsilon
+            )
+        model.set_params(params)
+
+    def reset(self):
+        self.cache = None
+
+    def get_name(self):
+        return f"RMSprop(rho={self.rho})"
+
+
+class Adam(Optimizer):
+    def __init__(self, learning_rate=0.001, beta1=0.9, beta2=0.999, epsilon=1e-8):
+        super().__init__(learning_rate)
+        self.beta1 = beta1
+        self.beta2 = beta2
+        self.epsilon = epsilon
+        self.m = None
+        self.v = None
+        self.t = 0
+
+    def step(self, model, grads):
+        param_names = ["W1", "b1", "W2", "b2", "W3", "b3"]
+        params = model.get_params()
+        if self.m is None:
+            self.m = {}
+            self.v = {}
+            for name in param_names:
+                self.m[name] = np.zeros_like(grads[name])
+                self.v[name] = np.zeros_like(grads[name])
+        self.t += 1
+        for i, name in enumerate(param_names):
+            self.m[name] = self.beta1 * self.m[name] + (1 - self.beta1) * grads[name]
+            self.v[name] = self.beta2 * self.v[name] + (1 - self.beta2) * grads[name] ** 2
+            m_hat = self.m[name] / (1 - self.beta1 ** self.t)
+            v_hat = self.v[name] / (1 - self.beta2 ** self.t)
+            params[i] = params[i] - (self.lr * m_hat / (np.sqrt(v_hat) + self.epsilon))
+        model.set_params(params)
+
+    def reset(self):
+        self.m = None
+        self.v = None
+        self.t = 0
+
+    def get_name(self):
+        return f"Adam(beta1={self.beta1}, beta2={self.beta2})"
+
+
+def load_mnist():
+    from sklearn.datasets import fetch_openml
+    from sklearn.model_selection import train_test_split
+
+    print("Loading MNIST dataset...")
+    mnist = fetch_openml("mnist_784", version=1, as_frame=False, parser="liac-arff")
+    X, y = mnist.data, mnist.target.astype(int)
+    X = X / 255.0
+    y_onehot = np.zeros((len(y), 10))
+    y_onehot[np.arange(len(y)), y] = 1
+    X_temp, X_test, y_temp, y_test = train_test_split(
+        X, y_onehot, test_size=0.1, random_state=42, stratify=y
+    )
+    X_train, X_val, y_train, y_val = train_test_split(
+        X_temp, y_temp, test_size=0.1111, random_state=42, stratify=np.argmax(y_temp, axis=1)
+    )
+    print(f"Training samples: {len(X_train)}")
+    print(f"Validation samples: {len(X_val)}")
+    print(f"Test samples: {len(X_test)}")
+    return X_train, X_val, X_test, y_train, y_val, y_test
+
+
+def compute_accuracy(model, X, y):
+    logits = model.forward(X)
+    pred_classes = np.argmax(logits, axis=1)
+    true_classes = np.argmax(y, axis=1)
+    return np.mean(pred_classes == true_classes)
+
+
+def create_batches(X, y, batch_size, shuffle=True):
+    n_samples = len(X)
+    indices = np.arange(n_samples)
+    if shuffle:
+        np.random.shuffle(indices)
+    for start in range(0, n_samples, batch_size):
+        end = min(start + batch_size, n_samples)
+        batch_idx = indices[start:end]
+        yield X[batch_idx], y[batch_idx]
+
+
+def train(model, optimizer, X_train, y_train, X_val, y_val, epochs=20, batch_size=128, verbose=True):
+    history = {
+        "train_loss": [],
+        "train_acc": [],
+        "val_loss": [],
+        "val_acc": [],
+        "epoch_times": [],
+    }
+    import time
+
+    for epoch in range(epochs):
+        epoch_start = time.time()
+        epoch_losses = []
+        for X_batch, y_batch in create_batches(X_train, y_train, batch_size):
+            logits = model.forward(X_batch)
+            loss = model.cross_entropy_loss(logits, y_batch)
+            epoch_losses.append(loss)
+            grads = model.backward(y_batch)
+            optimizer.step(model, grads)
+        epoch_time = time.time() - epoch_start
+        train_loss = np.mean(epoch_losses)
+        train_acc = compute_accuracy(model, X_train, y_train)
+        val_logits = model.forward(X_val)
+        val_loss = model.cross_entropy_loss(val_logits, y_val)
+        val_acc = compute_accuracy(model, X_val, y_val)
+        history["train_loss"].append(train_loss)
+        history["train_acc"].append(train_acc)
+        history["val_loss"].append(val_loss)
+        history["val_acc"].append(val_acc)
+        history["epoch_times"].append(epoch_time)
+        if verbose:
+            print(
+                f"Epoch {epoch+1:3d}/{epochs} | "
+                f"Loss: {train_loss:.4f} | "
+                f"Train Acc: {train_acc:.4f} | "
+                f"Val Acc: {val_acc:.4f} | "
+                f"Time: {epoch_time:.2f}s"
+            )
+    return history
+
+
+def run_optimizer_showdown():
+    X_train, X_val, X_test, y_train, y_val, y_test = load_mnist()
+    optimizers = [
+        SGD(learning_rate=0.1),
+        SGDMomentum(learning_rate=0.01, momentum=0.9),
+        RMSprop(learning_rate=0.001, rho=0.99),
+        Adam(learning_rate=0.001, beta1=0.9, beta2=0.999),
+    ]
+    base_model = MLP(seed=42)
+    initial_params = base_model.copy_params()
+    all_results = {}
+    trained_models = {}
+    for opt in optimizers:
+        print(f"\n{'='*60}")
+        print(f"Training with {opt.get_name()}")
+        print(f"{'='*60}")
+        model = MLP(seed=42)
+        model.set_params([p.copy() for p in initial_params])
+        opt.reset()
+        history = train(
+            model,
+            opt,
+            X_train,
+            y_train,
+            X_val,
+            y_val,
+            epochs=20,
+            batch_size=128,
+        )
+        all_results[opt.get_name()] = history
+        trained_models[opt.get_name()] = model
+    print(f"\n{'='*60}")
+    print("FINAL TEST SET EVALUATION (single evaluation)")
+    print(f"{'='*60}")
+    for name, model in trained_models.items():
+        test_acc = compute_accuracy(model, X_test, y_test)
+        all_results[name]["final_test_acc"] = test_acc
+        print(f"{name.split('(')[0]:<20} Test Accuracy: {test_acc*100:.2f}%")
+    return all_results
+
+
+def plot_results(all_results):
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    colors = {
+        "SGD": "#1f77b4",
+        "SGD with Momentum": "#ff7f0e",
+        "RMSprop": "#2ca02c",
+        "Adam": "#d62728",
+    }
+
+    def get_color(name):
+        if "SGD with Momentum" in name:
+            return colors["SGD with Momentum"]
+        for key in ["Adam", "RMSprop", "SGD"]:
+            if key in name:
+                return colors[key]
+        return "black"
+
+    sample_history = next(iter(all_results.values()))
+    num_epochs = len(sample_history["train_loss"])
+    epochs = range(1, num_epochs + 1)
+    ax1 = axes[0, 0]
+    for name, history in all_results.items():
+        ax1.plot(
+            range(1, len(history["train_loss"]) + 1),
+            history["train_loss"],
+            label=name.split("(")[0],
+            color=get_color(name),
+            linewidth=2,
+        )
+    ax1.set_xlabel("Epoch")
+    ax1.set_ylabel("Training Loss")
+    ax1.set_title("Training Loss Comparison")
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+    ax1.set_yscale("log")
+    ax2 = axes[0, 1]
+    for name, history in all_results.items():
+        ax2.plot(
+            range(1, len(history["val_acc"]) + 1),
+            [a * 100 for a in history["val_acc"]],
+            label=name.split("(")[0],
+            color=get_color(name),
+            linewidth=2,
+        )
+    ax2.set_xlabel("Epoch")
+    ax2.set_ylabel("Validation Accuracy (%)")
+    ax2.set_title("Validation Accuracy Comparison")
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+    ax2.axhline(y=95, color="gray", linestyle="--", alpha=0.5)
+    ax3 = axes[1, 0]
+    for name, history in all_results.items():
+        train_acc = [a * 100 for a in history["train_acc"]]
+        val_acc = [a * 100 for a in history["val_acc"]]
+        gap = [t - v for t, v in zip(train_acc, val_acc)]
+        ax3.plot(
+            range(1, len(gap) + 1),
+            gap,
+            label=name.split("(")[0],
+            color=get_color(name),
+            linewidth=2,
+        )
+    ax3.set_xlabel("Epoch")
+    ax3.set_ylabel("Train - Validation Accuracy (%)")
+    ax3.set_title("Generalization Gap")
+    ax3.legend()
+    ax3.grid(True, alpha=0.3)
+    ax4 = axes[1, 1]
+    final_metrics = []
+    for name, history in all_results.items():
+        val_acc = history["val_acc"]
+        total_epochs = len(val_acc)
+        epochs_to_95 = None
+        for i, acc in enumerate(val_acc):
+            if acc >= 0.95:
+                epochs_to_95 = i + 1
+                break
+        final_metrics.append(
+            {
+                "name": name.split("(")[0],
+                "final_val_acc": val_acc[-1] * 100,
+                "epochs_to_95": epochs_to_95 if epochs_to_95 else f">{total_epochs}",
+                "total_time": sum(history["epoch_times"]),
+            }
+        )
+    names = [m["name"] for m in final_metrics]
+    epochs_values = [
+        m["epochs_to_95"] if isinstance(m["epochs_to_95"], int) else num_epochs + 1
+        for m in final_metrics
+    ]
+    bar_colors = [get_color(m["name"]) for m in final_metrics]
+    bars = ax4.bar(names, epochs_values, color=bar_colors)
+    ax4.set_ylabel("Epochs to 95% Validation Accuracy")
+    ax4.set_title("Convergence Speed (fewer epochs = faster)")
+    ax4.set_ylim(0, num_epochs + 5)
+    for bar, m in zip(bars, final_metrics):
+        label = str(m["epochs_to_95"])
+        ax4.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 0.3,
+            label,
+            ha="center",
+            va="bottom",
+            fontsize=10,
+        )
+    plt.tight_layout()
+    plt.savefig("optimizer_comparison.png", dpi=150, bbox_inches="tight")
+    plt.show()
+    return final_metrics
+
+
+def print_summary_table(final_metrics, all_results):
+    print("\n" + "=" * 80)
+    print("OPTIMIZER SHOWDOWN RESULTS")
+    print("=" * 80)
+    print(
+        f"\n{'Optimizer':<20} {'Val Acc':<12} {'Test Acc':<12} "
+        f"{'Epochs to 95%':<15} {'Total Time':<12}"
+    )
+    print("-" * 80)
+    for name, history in all_results.items():
+        val_acc = history["val_acc"]
+        final_val_acc = val_acc[-1] * 100
+        final_test_acc = history.get("final_test_acc", 0) * 100
+        total_time = sum(history["epoch_times"])
+        epochs_to_95 = "N/A"
+        for i, acc in enumerate(val_acc):
+            if acc >= 0.95:
+                epochs_to_95 = str(i + 1)
+                break
+        short_name = name.split("(")[0]
+        print(
+            f"{short_name:<20} {final_val_acc:<12.2f}% {final_test_acc:<12.2f}% "
+            f"{epochs_to_95:<15} {total_time:<12.2f}s"
+        )
+    print("\nNote: Val Acc = validation accuracy (monitored during training)")
+    print("      Test Acc = held-out test accuracy (evaluated only once)")
+
+
+def learning_rate_sensitivity(X_train, y_train, X_val, y_val):
+    multipliers = [0.1, 0.3, 1.0, 3.0, 10.0]
+    base_lrs = {
+        "SGD": 0.1,
+        "SGD with Momentum": 0.01,
+        "RMSprop": 0.001,
+        "Adam": 0.001,
+    }
+    sensitivity_results = {name: {"lrs": [], "accs": []} for name in base_lrs}
+    base_model = MLP(seed=42)
+    initial_params = base_model.copy_params()
+    for mult in multipliers:
+        print(f"\nTesting learning rate multiplier: {mult}x")
+        for name, base_lr in base_lrs.items():
+            lr = base_lr * mult
+            if name == "SGD":
+                opt = SGD(learning_rate=lr)
+            elif name == "SGD with Momentum":
+                opt = SGDMomentum(learning_rate=lr, momentum=0.9)
+            elif name == "RMSprop":
+                opt = RMSprop(learning_rate=lr)
+            else:
+                opt = Adam(learning_rate=lr)
+            model = MLP(seed=42)
+            model.set_params([p.copy() for p in initial_params])
+            opt.reset()
+            history = train(
+                model,
+                opt,
+                X_train,
+                y_train,
+                X_val,
+                y_val,
+                epochs=10,
+                batch_size=128,
+                verbose=False,
+            )
+            final_acc = history["val_acc"][-1]
+            sensitivity_results[name]["lrs"].append(lr)
+            sensitivity_results[name]["accs"].append(final_acc)
+            print(f"  {name}: lr={lr:.4f}, val_acc={final_acc:.4f}")
+    return sensitivity_results
+
+
+def plot_sensitivity(sensitivity_results):
+    plt.figure(figsize=(10, 6))
+    colors = {
+        "SGD": "#1f77b4",
+        "SGD with Momentum": "#ff7f0e",
+        "RMSprop": "#2ca02c",
+        "Adam": "#d62728",
+    }
+    for name, data in sensitivity_results.items():
+        plt.plot(
+            data["lrs"],
+            [a * 100 for a in data["accs"]],
+            "o-",
+            label=name,
+            color=colors[name],
+            linewidth=2,
+            markersize=8,
+        )
+    plt.xlabel("Learning Rate")
+    plt.ylabel("Validation Accuracy after 10 epochs (%)")
+    plt.title("Learning Rate Sensitivity")
+    plt.xscale("log")
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.savefig("lr_sensitivity.png", dpi=150, bbox_inches="tight")
+    plt.show()
+
+
+def cosine_schedule(epoch, total_epochs, initial_lr, min_lr=1e-6):
+    return min_lr + 0.5 * (initial_lr - min_lr) * (
+        1 + np.cos(np.pi * epoch / max(1, total_epochs - 1))
+    )
+
+
+def step_decay_schedule(epoch, initial_lr, drop_factor=0.1, drop_epochs=[30, 60, 80]):
+    lr = initial_lr
+    for drop_epoch in drop_epochs:
+        if epoch >= drop_epoch:
+            lr *= drop_factor
+    return lr
+
+
+def warmup_schedule(epoch, warmup_epochs, initial_lr):
+    if warmup_epochs <= 0:
+        return initial_lr
+    if epoch < warmup_epochs:
+        return initial_lr * (epoch + 1) / warmup_epochs
+    return initial_lr
+
+
+class AdamW(Adam):
+    def __init__(
+        self,
+        learning_rate=0.001,
+        beta1=0.9,
+        beta2=0.999,
+        epsilon=1e-8,
+        weight_decay=0.01,
+    ):
+        super().__init__(learning_rate, beta1, beta2, epsilon)
+        self.weight_decay = weight_decay
+
+    def step(self, model, grads):
+        param_names = ["W1", "b1", "W2", "b2", "W3", "b3"]
+        params = model.get_params()
+        if self.m is None:
+            self.m = {}
+            self.v = {}
+            for name in param_names:
+                self.m[name] = np.zeros_like(grads[name])
+                self.v[name] = np.zeros_like(grads[name])
+        self.t += 1
+        for i, name in enumerate(param_names):
+            self.m[name] = self.beta1 * self.m[name] + (1 - self.beta1) * grads[name]
+            self.v[name] = self.beta2 * self.v[name] + (1 - self.beta2) * grads[name] ** 2
+            m_hat = self.m[name] / (1 - self.beta1 ** self.t)
+            v_hat = self.v[name] / (1 - self.beta2 ** self.t)
+            adam_update = self.lr * m_hat / (np.sqrt(v_hat) + self.epsilon)
+            is_weight = name.startswith("W")
+            if is_weight and self.weight_decay > 0:
+                weight_decay_term = self.lr * self.weight_decay * params[i]
+                params[i] = params[i] - adam_update - weight_decay_term
+            else:
+                params[i] = params[i] - adam_update
+        model.set_params(params)
+
+    def get_name(self):
+        return f"AdamW(wd={self.weight_decay})"
+
+
+def load_cifar10():
+    from sklearn.datasets import fetch_openml
+    from sklearn.model_selection import train_test_split
+    from sklearn.preprocessing import LabelEncoder
+
+    print("Loading CIFAR-10...")
+    cifar = fetch_openml("CIFAR_10", version=1, as_frame=False)
+    X = cifar.data
+    y = cifar.target
+    if y.dtype.kind in ("U", "S", "O"):
+        y = LabelEncoder().fit_transform(y)
+    else:
+        y = y.astype(int)
+    X = X / 255.0
+    y_onehot = np.zeros((len(y), 10))
+    y_onehot[np.arange(len(y)), y] = 1
+    X_temp, X_test, y_temp, y_test = train_test_split(
+        X, y_onehot, test_size=0.1, random_state=42, stratify=y
+    )
+    X_train, X_val, y_train, y_val = train_test_split(
+        X_temp, y_temp, test_size=0.1111, random_state=42, stratify=np.argmax(y_temp, axis=1)
+    )
+    print(f"Training samples: {len(X_train)}")
+    print(f"Validation samples: {len(X_val)}")
+    print(f"Test samples: {len(X_test)}")
+    return X_train, X_val, X_test, y_train, y_val, y_test
+
+
+def clip_gradients(grads, max_norm=1.0):
+    total_norm = 0
+    for name, grad in grads.items():
+        total_norm += np.sum(grad ** 2)
+    total_norm = np.sqrt(total_norm)
+    if total_norm > max_norm:
+        scale = max_norm / (total_norm + 1e-8)
+        grads = {name: grad * scale for name, grad in grads.items()}
+    return grads, total_norm
+
+
+__all__ = [
+    "Adam",
+    "AdamW",
+    "MLP",
+    "Optimizer",
+    "RMSprop",
+    "SGD",
+    "SGDMomentum",
+    "clip_gradients",
+    "compute_accuracy",
+    "cosine_schedule",
+    "create_batches",
+    "learning_rate_sensitivity",
+    "load_cifar10",
+    "load_mnist",
+    "plot_results",
+    "plot_sensitivity",
+    "print_summary_table",
+    "run_optimizer_showdown",
+    "step_decay_schedule",
+    "train",
+    "warmup_schedule",
+]

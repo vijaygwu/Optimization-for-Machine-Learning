@@ -104,9 +104,15 @@ class Adagrad(Optimizer):
         }
         super().__init__(params, defaults)
 
-    def _init_state(self, param: np.ndarray, param_id: int) -> Dict[str, Any]:
+    def _init_state(
+        self,
+        param: np.ndarray,
+        param_id: int,
+        group: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
         """Initialize optimizer state for a parameter."""
-        initial_value = self.defaults['initial_accumulator_value']
+        group = self.defaults if group is None else group
+        initial_value = group['initial_accumulator_value']
         return {
             'step': 0,
             'sum': np.full_like(param, initial_value),  # Accumulated squared gradients
@@ -142,7 +148,7 @@ class Adagrad(Optimizer):
                 # Get or initialize state
                 param_id = self._get_param_id(param, group_idx, param_idx)
                 if param_id not in self.state:
-                    self.state[param_id] = self._init_state(param, param_id)
+                    self.state[param_id] = self._init_state(param, param_id, group)
                 state = self.state[param_id]
                 state['step'] += 1
                 step = state['step']
@@ -198,7 +204,7 @@ class AdagradSparse(Adagrad):
 
                 param_id = self._get_param_id(param, group_idx, param_idx)
                 if param_id not in self.state:
-                    self.state[param_id] = self._init_state(param, param_id)
+                    self.state[param_id] = self._init_state(param, param_id, group)
                 state = self.state[param_id]
                 state['step'] += 1
                 step = state['step']
