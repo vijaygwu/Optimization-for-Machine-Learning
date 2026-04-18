@@ -39,6 +39,8 @@ def mixup(x, y, alpha=0.2, num_classes=None):
     """Apply mixup and always return soft labels."""
     if alpha <= 0:
         raise ValueError(f"alpha must be positive, got {alpha}")
+    if x.device != y.device:
+        y = y.to(x.device)
 
     if y.dim() == 1:
         if num_classes is None:
