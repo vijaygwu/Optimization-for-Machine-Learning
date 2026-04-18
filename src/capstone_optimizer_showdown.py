@@ -491,7 +491,7 @@ def plot_results(all_results):
         final_metrics.append(
             {
                 "name": name.split("(")[0],
-                "final_val_acc": val_acc[-1] * 100,
+                "best_val_acc": history["best_val_acc"] * 100,  # Best achieved during training
                 "epochs_to_95": epochs_to_95 if epochs_to_95 else f">{total_epochs}",
                 "total_time": sum(history["epoch_times"]),
             }
@@ -527,22 +527,21 @@ def print_summary_table(final_metrics, all_results):
     print("OPTIMIZER SHOWDOWN RESULTS")
     print("=" * 80)
     print(
-        f"\n{'Optimizer':<20} {'Val Acc':<12} "
+        f"\n{'Optimizer':<20} {'Best Val Acc':<14} "
         f"{'Epochs to 95%':<15} {'Total Time':<12}"
     )
     print("-" * 80)
     for name, history in all_results.items():
-        val_acc = history["val_acc"]
-        final_val_acc = val_acc[-1] * 100
+        best_val_acc = history["best_val_acc"] * 100  # Best achieved during training
         total_time = sum(history["epoch_times"])
         epochs_to_95 = "N/A"
-        for i, acc in enumerate(val_acc):
+        for i, acc in enumerate(history["val_acc"]):
             if acc >= 0.95:
                 epochs_to_95 = str(i + 1)
                 break
         short_name = name.split("(")[0]
         print(
-            f"{short_name:<20} {final_val_acc:<12.2f}% "
+            f"{short_name:<20} {best_val_acc:<14.2f}% "
             f"{epochs_to_95:<15} {total_time:<12.2f}s"
         )
 
@@ -830,9 +829,9 @@ class LAMB(Optimizer):
 def convergence_analysis(model, optimizer, X_train, y_train,
                          X_val, y_val, epochs=50, batch_size=128, base_seed=42):
     """
-    Track metrics relevant to convergence theory:
+    Track convergence diagnostics:
     - Gradient norm decay
-    - Loss suboptimality gap
+    - Training loss trajectory (not a true suboptimality gap since f* is unknown)
     - Distance from initialization
     """
     initial_params = model.copy_params()
