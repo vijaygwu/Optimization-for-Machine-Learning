@@ -22,9 +22,11 @@ def cutout(image, mask_size):
         h, w = image.shape[:2]
 
     mask_size = min(mask_size, h, w)
+    half_low = mask_size // 2
+    half_high = mask_size - half_low
     cy, cx = np.random.randint(h), np.random.randint(w)
-    y1, y2 = np.clip([cy - mask_size // 2, cy + mask_size // 2], 0, h)
-    x1, x2 = np.clip([cx - mask_size // 2, cx + mask_size // 2], 0, w)
+    y1, y2 = np.clip([cy - half_low, cy + half_high], 0, h)
+    x1, x2 = np.clip([cx - half_low, cx + half_high], 0, w)
     image_aug = image.clone() if torch.is_tensor(image) else image.copy()
     if channels_first:
         image_aug[:, y1:y2, x1:x2] = 0

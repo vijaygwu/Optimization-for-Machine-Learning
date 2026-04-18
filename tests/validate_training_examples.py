@@ -40,6 +40,22 @@ def test_cutout_supports_chw_and_hwc() -> None:
     assert (hwc_aug == 0).any()
 
 
+def test_cutout_preserves_requested_odd_mask_size() -> None:
+    torch.manual_seed(6)
+    np.random.seed(6)
+
+    chw = torch.ones(3, 9, 9)
+    chw_aug = cutout(chw, 5)
+
+    zero_mask = (chw_aug[0] == 0)
+    zero_rows, zero_cols = torch.where(zero_mask)
+    assert len(zero_rows) == 25
+    assert zero_rows.min().item() == 1
+    assert zero_rows.max().item() == 5
+    assert zero_cols.min().item() == 2
+    assert zero_cols.max().item() == 6
+
+
 def test_mixup_returns_soft_labels() -> None:
     torch.manual_seed(0)
     np.random.seed(0)
@@ -131,6 +147,8 @@ def main() -> None:
     print("Running Book 2 training-example validation...")
     test_cutout_supports_chw_and_hwc()
     print("  - cutout works for CHW tensors and HWC arrays")
+    test_cutout_preserves_requested_odd_mask_size()
+    print("  - cutout preserves the requested odd mask size when the mask fits")
     test_mixup_returns_soft_labels()
     print("  - mixup returns mixed inputs with valid soft labels")
     test_cosine_schedule_hits_min_lr()
