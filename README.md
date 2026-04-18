@@ -6,7 +6,7 @@ Companion code for **"Optimization for AI: From Gradient Descent to Modern Optim
 
 ```
 Optimization-for-Machine-Learning/
-├── notebooks/              # Jupyter notebooks for each chapter
+├── notebooks/              # Jupyter notebooks; several chapter notebooks are exercise workbooks with intentional TODOs
 │   ├── ch01_convex_optimization.ipynb
 │   ├── ch02_gradient_descent.ipynb
 │   ├── ch03_stochastic_optimization.ipynb
@@ -37,15 +37,21 @@ Optimization-for-Machine-Learning/
 
 ## Chapters Covered
 
-| Chapter | Topic | Notebook |
-|---------|-------|----------|
-| 1 | Convex Optimization | `ch01_convex_optimization.ipynb` |
-| 2 | Gradient Descent & Momentum | `ch02_gradient_descent.ipynb` |
-| 3 | Stochastic Optimization | `ch03_stochastic_optimization.ipynb` |
-| 4 | Advanced Optimizers | `ch04_advanced_optimizers.ipynb` |
-| 5 | Loss Functions | `ch05_loss_functions.ipynb` |
-| 6 | Regularization | `ch06_regularization.ipynb` |
-| 7 | Convergence Analysis | `ch07_convergence_analysis.ipynb` |
+| Chapter | Topic | Notebook | Status |
+|---------|-------|----------|--------|
+| 1 | Convex Optimization | `ch01_convex_optimization.ipynb` | Exercise workbook |
+| 2 | Gradient Descent & Momentum | `ch02_gradient_descent.ipynb` | Exercise workbook |
+| 3 | Stochastic Optimization | `ch03_stochastic_optimization.ipynb` | Exercise workbook |
+| 4 | Advanced Optimizers | `ch04_advanced_optimizers.ipynb` | Exercise workbook |
+| 5 | Loss Functions | `ch05_loss_functions.ipynb` | Exercise workbook |
+| 6 | Regularization | `ch06_regularization.ipynb` | Exercise workbook |
+| 7 | Convergence Analysis | `ch07_convergence_analysis.ipynb` | Reference notebook |
+
+## Notebook Status
+
+- The maintained runnable reference code for the book lives in `src/` and is validated by `tests/`.
+- `ch01` through `ch06`, `capstone_optimizer_showdown.ipynb`, and `interview_prep.ipynb` are exercise workbooks: they intentionally include `TODO` prompts or `NotImplementedError` placeholders for the reader to complete.
+- `debugging_lab.ipynb`, `optimizer_cheatsheet.ipynb`, and other utility notebooks are supplemental references; read their opening note before assuming every cell is a turnkey script.
 
 ## Quick Start
 
@@ -119,11 +125,11 @@ augmented = cutout(image, mask_size=16)
 
 ## Capstone Project
 
-The capstone (`notebooks/capstone_optimizer_showdown.ipynb`) implements SGD, Momentum, RMSprop, and Adam from scratch and benchmarks them on MNIST, reproducing key results from the book.
+The capstone notebook (`notebooks/capstone_optimizer_showdown.ipynb`) is an exercise workbook that mirrors the book chapter and leaves some implementation checkpoints for the reader. The fully maintained runnable benchmark lives in `src/capstone_optimizer_showdown.py`.
 
 ## Additional Resources
 
-- **Interview Prep:** `notebooks/interview_prep.ipynb` — Common optimization interview questions
+- **Interview Prep:** `notebooks/interview_prep.ipynb` — Exercise workbook with interview questions and coding prompts
 - **Debugging Lab:** `notebooks/debugging_lab.ipynb` — Diagnose training issues
 - **Cheatsheet:** `notebooks/optimizer_cheatsheet.ipynb` — Quick reference for hyperparameters
 
