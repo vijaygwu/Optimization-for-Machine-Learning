@@ -6,14 +6,14 @@ import numpy as np
 
 
 class MLP:
-    def __init__(self, seed=42):
+    def __init__(self, input_dim=784, num_classes=10, seed=42):
         rng = np.random.default_rng(seed)
-        self.W1 = rng.standard_normal((784, 256)) * np.sqrt(2.0 / 784)
+        self.W1 = rng.standard_normal((input_dim, 256)) * np.sqrt(2.0 / input_dim)
         self.b1 = np.zeros((1, 256))
         self.W2 = rng.standard_normal((256, 128)) * np.sqrt(2.0 / 256)
         self.b2 = np.zeros((1, 128))
-        self.W3 = rng.standard_normal((128, 10)) * np.sqrt(2.0 / 128)
-        self.b3 = np.zeros((1, 10))
+        self.W3 = rng.standard_normal((128, num_classes)) * np.sqrt(2.0 / 128)
+        self.b3 = np.zeros((1, num_classes))
         self.cache = {}
 
     def relu(self, x):
