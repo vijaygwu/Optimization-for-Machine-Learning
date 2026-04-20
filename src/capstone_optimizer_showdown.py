@@ -523,26 +523,38 @@ def plot_results(all_results):
 
 
 def print_summary_table(final_metrics, all_results):
+    """
+    Print a summary table sorted by validation performance.
+
+    The ranking uses best validation accuracy first, then faster
+    95%-threshold crossing, then lower total wall-clock time.
+    Held-out test accuracy is reported separately after selection.
+    """
     print("\n" + "=" * 80)
     print("OPTIMIZER SHOWDOWN RESULTS")
     print("=" * 80)
     print(
-        f"\n{'Optimizer':<20} {'Best Val Acc':<14} "
+        f"\n{'Rank':<6}{'Optimizer':<20} {'Best Val Acc':<14} "
         f"{'Epochs to 95%':<15} {'Total Time':<12}"
     )
     print("-" * 80)
-    for name, history in all_results.items():
-        best_val_acc = history["best_val_acc"] * 100  # Best achieved during training
-        total_time = sum(history["epoch_times"])
-        epochs_to_95 = "N/A"
-        for i, acc in enumerate(history["val_acc"]):
-            if acc >= 0.95:
-                epochs_to_95 = str(i + 1)
-                break
-        short_name = name.split("(")[0]
+
+    ranked_metrics = sorted(
+        final_metrics,
+        key=lambda metric: (
+            -metric["best_val_acc"],
+            metric["epochs_to_95"]
+            if isinstance(metric["epochs_to_95"], int)
+            else float("inf"),
+            metric["total_time"],
+            metric["name"],
+        ),
+    )
+
+    for rank, metric in enumerate(ranked_metrics, start=1):
         print(
-            f"{short_name:<20} {best_val_acc:<14.2f}% "
-            f"{epochs_to_95:<15} {total_time:<12.2f}s"
+            f"{rank:<6}{metric['name']:<20} {metric['best_val_acc']:<14.2f}% "
+            f"{str(metric['epochs_to_95']):<15} {metric['total_time']:<12.2f}s"
         )
 
     selected_name = next(
@@ -554,7 +566,8 @@ def print_summary_table(final_metrics, all_results):
         print(f"\nSelected by validation: {selected_name.split('(')[0]}")
         print(f"Held-out test accuracy: {selected_test_acc:.2f}%")
 
-    print("\nNote: Table ranks optimizers by validation metrics only.")
+    print("\nNote: Table is sorted by validation metrics only.")
+    print("      Tie-breakers: faster 95%-threshold crossing, then lower time.")
     print("      Held-out test accuracy is evaluated once after selection.")
 
 
@@ -999,6 +1012,8 @@ def compute_matched_comparison(X_train, y_train, X_val, y_val,
 
     base_model = MLP(seed=42)
     initial_params = base_model.copy_params()
+    batch_size = 128
+    batches_per_epoch = max(1, (len(X_train) + batch_size - 1) // batch_size)
 
     results = {}
 
@@ -1008,34 +1023,51 @@ def compute_matched_comparison(X_train, y_train, X_val, y_val,
         opt.reset()
 
         start_time = time.time()
-        epoch = 0
+        full_epochs = 0
+        total_batches_processed = 0
         history = {'val_acc': [], 'elapsed_time': []}
 
         while True:
-            # Check budget BEFORE starting a new epoch to avoid overrun
-            if time.time() - start_time >= time_budget_seconds:
-                break
-
-            # Train one epoch
-            epoch_seed = 42 + epoch
+            # Use the next full-epoch seed, but stop on minibatch boundaries
+            # so any wall-clock overrun stays below one batch rather than one epoch.
+            epoch_seed = 42 + full_epochs
+            batches_this_pass = 0
+            budget_exhausted = False
             for X_batch, y_batch in create_batches(
-                X_train, y_train, 128, epoch_seed=epoch_seed
+                X_train, y_train, batch_size, epoch_seed=epoch_seed
             ):
+                if time.time() - start_time >= time_budget_seconds:
+                    budget_exhausted = True
+                    break
                 logits = model.forward(X_batch)
                 grads = model.backward(y_batch)
                 opt.step(model, grads)
+                batches_this_pass += 1
+                total_batches_processed += 1
+
+            if batches_this_pass == 0:
+                break
 
             # Record metrics
             val_acc = compute_accuracy(model, X_val, y_val)
             elapsed = time.time() - start_time
             history['val_acc'].append(val_acc)
             history['elapsed_time'].append(elapsed)
-            epoch += 1
+            if batches_this_pass == batches_per_epoch:
+                full_epochs += 1
+            if budget_exhausted:
+                break
 
-        history['total_epochs'] = epoch
+        history['full_epochs'] = full_epochs
+        history['batches_processed'] = total_batches_processed
+        history['epoch_equivalents'] = total_batches_processed / batches_per_epoch
         results[opt.get_name()] = history
-        print(f"{opt.get_name()}: {epoch} epochs in {time_budget_seconds}s, "
-              f"final val_acc={history['val_acc'][-1]:.4f}")
+        final_val_acc = history['val_acc'][-1] if history['val_acc'] else float('nan')
+        print(
+            f"{opt.get_name()}: {history['epoch_equivalents']:.2f} epoch-equivalents "
+            f"({history['full_epochs']} full epochs) in {time_budget_seconds}s, "
+            f"final val_acc={final_val_acc:.4f}"
+        )
 
     return results
 

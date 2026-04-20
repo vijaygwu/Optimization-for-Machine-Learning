@@ -40,11 +40,11 @@ Optimization-for-Machine-Learning/
 | Chapter | Topic | Notebook | Status |
 |---------|-------|----------|--------|
 | 1 | Convex Optimization | `ch01_convex_optimization.ipynb` | Exercise workbook |
-| 2 | Gradient Descent & Momentum | `ch02_gradient_descent.ipynb` | Exercise workbook |
-| 3 | Stochastic Optimization | `ch03_stochastic_optimization.ipynb` | Exercise workbook |
-| 4 | Advanced Optimizers | `ch04_advanced_optimizers.ipynb` | Exercise workbook |
-| 5 | Loss Functions | `ch05_loss_functions.ipynb` | Exercise workbook |
-| 6 | Regularization | `ch06_regularization.ipynb` | Exercise workbook |
+| 2 | Gradient Descent and Momentum | `ch02_gradient_descent.ipynb` | Exercise workbook |
+| 3 | Stochastic Optimization Methods | `ch03_stochastic_optimization.ipynb` | Exercise workbook |
+| 4 | Advanced Optimizers: Adaptive Methods, Schedules, and Tuning | `ch04_advanced_optimizers.ipynb` | Exercise workbook |
+| 5 | Loss Functions and Optimization Objectives | `ch05_loss_functions.ipynb` | Exercise workbook |
+| 6 | Regularization and Training Stability | `ch06_regularization.ipynb` | Exercise workbook |
 | 7 | Convergence Analysis | `ch07_convergence_analysis.ipynb` | Reference notebook |
 
 ## Notebook Status
