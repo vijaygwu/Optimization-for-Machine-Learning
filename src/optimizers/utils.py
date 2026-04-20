@@ -9,8 +9,40 @@ Author: Optimization for Machine Learning Book
 License: MIT
 """
 
-from typing import List, Optional, Tuple, Union, Callable
+import random
+from typing import Callable, List, Optional, Tuple, Union
 import numpy as np
+
+
+def _capture_rng_state(torch_module):
+    """Capture Python, NumPy, and torch RNG state for later restoration."""
+    state = {
+        "python": random.getstate(),
+        "numpy": np.random.get_state(),
+        "torch_cpu": torch_module.random.get_rng_state(),
+    }
+    if torch_module.cuda.is_available():
+        state["torch_cuda"] = torch_module.cuda.get_rng_state_all()
+
+    mps_backend = getattr(torch_module.backends, "mps", None)
+    if (
+        mps_backend is not None
+        and mps_backend.is_available()
+        and hasattr(torch_module.mps, "get_rng_state")
+    ):
+        state["torch_mps"] = torch_module.mps.get_rng_state()
+    return state
+
+
+def _restore_rng_state(torch_module, state) -> None:
+    """Restore previously captured Python, NumPy, and torch RNG state."""
+    random.setstate(state["python"])
+    np.random.set_state(state["numpy"])
+    torch_module.random.set_rng_state(state["torch_cpu"])
+    if "torch_cuda" in state:
+        torch_module.cuda.set_rng_state_all(state["torch_cuda"])
+    if "torch_mps" in state and hasattr(torch_module.mps, "set_rng_state"):
+        torch_module.mps.set_rng_state(state["torch_mps"])
 
 
 def clip_grad_norm_(
@@ -603,8 +635,9 @@ def lr_finder(model, train_loader, optimizer_class=None, criterion=None,
     """
     Learning rate range test to find optimal learning rate.
 
-    NOTE: This function saves and restores model state, so the model
-    is unchanged after the test completes.
+    NOTE: This function saves and restores model state, training mode,
+    and Python/NumPy/torch RNG state so the surrounding workflow is
+    unchanged after the test completes.
 
     Args:
         model: PyTorch model to test
@@ -667,7 +700,8 @@ def lr_finder(model, train_loader, optimizer_class=None, criterion=None,
         # IterableDataset / streaming loader: __len__ not supported, skip check
         pass
 
-    # CRITICAL: Save model state AND training mode before mutation
+    # CRITICAL: Save RNG state, model state, and training mode before mutation
+    rng_state = _capture_rng_state(torch)
     initial_state = {k: v.clone() for k, v in model.state_dict().items()}
     was_training = model.training
 
@@ -722,9 +756,10 @@ def lr_finder(model, train_loader, optimizer_class=None, criterion=None,
                 param_group['lr'] *= lr_mult
 
     finally:
-        # CRITICAL: Restore model state and training mode after test
+        # CRITICAL: Restore model state, training mode, and RNG state after test
         model.load_state_dict(initial_state)
         model.train(was_training)
+        _restore_rng_state(torch, rng_state)
 
     return lrs, losses
 
