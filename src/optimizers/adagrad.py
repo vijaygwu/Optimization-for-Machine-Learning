@@ -168,6 +168,8 @@ class Adagrad(Optimizer):
                 std = np.sqrt(sum_sq) + eps
                 param -= effective_lr * grad / std
 
+        self._raise_if_extra_gradients(grads, grad_idx)
+
 
 class AdagradSparse(Adagrad):
     """
@@ -224,6 +226,8 @@ class AdagradSparse(Adagrad):
                 # Update only parameters with non-zero gradients
                 std = np.sqrt(sum_sq) + eps
                 param[nonzero_mask] -= effective_lr * grad[nonzero_mask] / std[nonzero_mask]
+
+        self._raise_if_extra_gradients(grads, grad_idx)
 
 
 class Adadelta(Optimizer):
@@ -347,3 +351,5 @@ class Adadelta(Optimizer):
 
                 # Apply update
                 param -= lr * delta
+
+        self._raise_if_extra_gradients(grads, grad_idx)

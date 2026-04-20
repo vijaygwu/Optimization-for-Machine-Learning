@@ -191,6 +191,8 @@ class RMSprop(Optimizer):
                     # Standard update
                     param -= lr * grad / avg
 
+        self._raise_if_extra_gradients(grads, grad_idx)
+
 
 class RMSpropTF(RMSprop):
     """
@@ -259,3 +261,5 @@ class RMSpropTF(RMSprop):
                     param -= lr * buf
                 else:
                     param -= lr * grad / avg
+
+        self._raise_if_extra_gradients(grads, grad_idx)

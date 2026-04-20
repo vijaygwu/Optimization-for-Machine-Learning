@@ -1009,7 +1009,11 @@ def compute_matched_comparison(X_train, y_train, X_val, y_val,
         epoch = 0
         history = {'val_acc': [], 'elapsed_time': []}
 
-        while time.time() - start_time < time_budget_seconds:
+        while True:
+            # Check budget BEFORE starting a new epoch to avoid overrun
+            if time.time() - start_time >= time_budget_seconds:
+                break
+
             # Train one epoch
             epoch_seed = 42 + epoch
             for X_batch, y_batch in create_batches(

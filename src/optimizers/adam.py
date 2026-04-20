@@ -177,6 +177,8 @@ class Adam(Optimizer):
                 # Update: w = w - lr * m_hat / (sqrt(v_hat) + eps)
                 param -= lr * m_hat / (np.sqrt(v_hat) + eps)
 
+        self._raise_if_extra_gradients(grads, grad_idx)
+
 
 class AdamW(Optimizer):
     """
@@ -315,6 +317,8 @@ class AdamW(Optimizer):
                     param *= (1 - lr * weight_decay)  # Apply weight decay first
                 param -= lr * m_hat / (np.sqrt(v_hat) + eps)  # Then Adam update
 
+        self._raise_if_extra_gradients(grads, grad_idx)
+
 
 class NAdam(Optimizer):
     """
@@ -440,3 +444,5 @@ class NAdam(Optimizer):
 
                 # Update
                 param -= lr * m_hat / (np.sqrt(v_hat) + eps)
+
+        self._raise_if_extra_gradients(grads, grad_idx)

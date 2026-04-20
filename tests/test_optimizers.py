@@ -14,6 +14,17 @@ if _repo_root not in sys.path:
 
 from src.optimizers import SGD, Adam, AdamW, RMSprop, Adagrad
 
+
+def _assert_value_error(callable_obj, expected_substring):
+    """Assert that a callable raises ValueError containing a substring."""
+    try:
+        callable_obj()
+        assert False, f"Expected ValueError containing {expected_substring!r}"
+    except ValueError as exc:
+        assert expected_substring in str(exc), (
+            f"Expected {expected_substring!r} in {exc!r}"
+        )
+
 def test_sgd_updates_in_correct_direction():
     """Test that SGD moves parameters in negative gradient direction."""
     params = [np.array([1.0, 2.0])]
@@ -327,6 +338,34 @@ def test_optimizers_require_explicit_gradient_lists():
     print("  - Explicit gradient contract test passed")
 
 
+def test_optimizer_steps_reject_gradient_count_mismatches():
+    """step() should reject both missing and extra explicit gradients."""
+    factories = [
+        ("SGD", lambda: SGD([np.array([1.0])], lr=0.1)),
+        ("Adam", lambda: Adam([np.array([1.0])], lr=1e-3)),
+        ("AdamW", lambda: AdamW([np.array([1.0])], lr=1e-3)),
+        ("RMSprop", lambda: RMSprop([np.array([1.0])], lr=1e-3)),
+        ("Adagrad", lambda: Adagrad([np.array([1.0])], lr=1e-2)),
+    ]
+
+    for name, factory in factories:
+        optimizer = factory()
+        _assert_value_error(
+            lambda optimizer=optimizer: optimizer.step([]),
+            "Not enough gradients provided",
+        )
+
+        optimizer = factory()
+        _assert_value_error(
+            lambda optimizer=optimizer: optimizer.step(
+                [np.array([1.0]), np.array([2.0])]
+            ),
+            "Too many gradients provided",
+        )
+
+        print(f"  - {name} gradient-count validation passed")
+
+
 def test_sgd_momentum_state_checkpoint():
     """Test that SGD with momentum state survives checkpoint/restore."""
     np.random.seed(42)
@@ -482,6 +521,7 @@ if __name__ == "__main__":
     test_adam_state_checkpoint_survives_param_recreation()
     test_adam_checkpoint_restores_across_processes()
     test_optimizers_require_explicit_gradient_lists()
+    test_optimizer_steps_reject_gradient_count_mismatches()
     test_sgd_momentum_state_checkpoint()
     test_checkpoint_restore_rejects_incompatible_parameters()
     test_lr_scheduler_edge_cases()

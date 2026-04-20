@@ -180,6 +180,8 @@ class SGD(Optimizer):
                 # Update parameters: w = w - lr * grad
                 param -= lr * grad
 
+        self._raise_if_extra_gradients(grads, grad_idx)
+
 
 class SGDW(SGD):
     """
@@ -250,3 +252,5 @@ class SGDW(SGD):
                 if weight_decay != 0:
                     param *= (1 - lr * weight_decay)  # Apply weight decay first
                 param -= lr * grad  # Then gradient update
+
+        self._raise_if_extra_gradients(grads, grad_idx)

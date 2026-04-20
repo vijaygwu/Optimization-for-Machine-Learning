@@ -268,6 +268,14 @@ class Optimizer(ABC):
         """
         return {}
 
+    @staticmethod
+    def _raise_if_extra_gradients(grads: List[np.ndarray], consumed: int) -> None:
+        """Reject gradient lists that contain unused entries."""
+        if consumed != len(grads):
+            raise ValueError(
+                f"Too many gradients provided: expected {consumed}, got {len(grads)}"
+            )
+
     def __repr__(self) -> str:
         """String representation of the optimizer."""
         format_string = self.__class__.__name__ + ' ('
