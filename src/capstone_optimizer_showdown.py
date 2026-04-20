@@ -570,6 +570,7 @@ def learning_rate_sensitivity(X_train, y_train, X_val, y_val):
     sensitivity_results = {name: {"lrs": [], "accs": []} for name in base_lrs}
     base_model = MLP(seed=42)
     initial_params = base_model.copy_params()
+    sweep_seed = 42
     for mult in multipliers:
         print(f"\nTesting learning rate multiplier: {mult}x")
         for name, base_lr in base_lrs.items():
@@ -599,6 +600,7 @@ def learning_rate_sensitivity(X_train, y_train, X_val, y_val):
                 epochs=10,
                 batch_size=128,
                 verbose=False,
+                base_seed=sweep_seed,
             )
             final_acc = history["val_acc"][-1]
             sensitivity_results[name]["lrs"].append(lr)
