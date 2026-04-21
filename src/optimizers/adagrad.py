@@ -293,7 +293,7 @@ class Adadelta(Optimizer):
         }
         super().__init__(params, defaults)
 
-    def _init_state(self, param: np.ndarray, param_id: int) -> Dict[str, Any]:
+    def _init_state(self, param: np.ndarray, param_id: str) -> Dict[str, Any]:
         """Initialize optimizer state."""
         return {
             'step': 0,
