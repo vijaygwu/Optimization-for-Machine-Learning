@@ -107,7 +107,7 @@ class Adagrad(Optimizer):
     def _init_state(
         self,
         param: np.ndarray,
-        param_id: int,
+        param_id: str,
         group: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """Initialize optimizer state for a parameter."""
