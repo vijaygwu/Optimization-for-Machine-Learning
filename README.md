@@ -19,16 +19,17 @@ Optimization-for-Machine-Learning/
 │   ├── debugging_lab.ipynb
 │   ├── interview_prep.ipynb
 │   └── optimizer_cheatsheet.ipynb
-├── src/                    # Reusable Python modules
-│   ├── optimizers/         # From-scratch optimizer implementations
-│   │   ├── base.py         # BaseOptimizer with checkpoint support
-│   │   ├── sgd.py          # SGD with momentum
-│   │   ├── adagrad.py      # AdaGrad
-│   │   ├── rmsprop.py      # RMSprop
-│   │   ├── adam.py         # Adam and AdamW
-│   │   └── utils.py        # Learning rate schedulers
-│   ├── loss_examples.py    # PerceptualLoss, SuperResolutionNet
-│   └── training_examples.py # Warmup, cosine schedule, cutout
+├── src/                    # Reusable Python modules (the maintained, tested reference code)
+│   ├── optimizers/         # From-scratch optimizer implementations (NumPy)
+│   │   ├── base.py         # Optimizer ABC (checkpointing) + LRScheduler, StepLR, CosineAnnealingLR
+│   │   ├── sgd.py          # SGD, SGDW (momentum, Nesterov, decoupled weight decay)
+│   │   ├── adam.py         # Adam, AdamW, NAdam
+│   │   ├── rmsprop.py      # RMSprop, RMSpropTF (centered variants)
+│   │   ├── adagrad.py      # Adagrad, AdagradSparse, Adadelta
+│   │   └── utils.py        # Grad clipping, LR schedules, param init, grad checks, LR finder, HP search
+│   ├── loss_examples.py    # cross_entropy_manual, PerceptualLoss, SuperResolutionNet (PyTorch)
+│   ├── training_examples.py # mixup, cutout, warmup/cosine/step schedules (PyTorch)
+│   └── capstone_optimizer_showdown.py  # Full runnable optimizer-showdown benchmark
 ├── tests/                  # Validation tests
 ├── summaries/              # Chapter summaries and quick references
 ├── requirements.txt        # Python dependencies
@@ -83,16 +84,25 @@ jupyter notebook notebooks/
 
 ### From-Scratch Optimizers (`src/optimizers/`)
 
-Clean, educational implementations of major optimizers:
+Clean, educational implementations of ten optimizers — each unit-tested against its
+PyTorch equivalent to machine precision, and kept in sync with the listings printed in
+the book:
 
 ```python
-from src.optimizers import SGD, Adam, AdamW, RMSprop, Adagrad
+from src.optimizers import (
+    SGD, SGDW, Adam, AdamW, NAdam, RMSprop, RMSpropTF, Adagrad, Adadelta,
+)
 
 # All optimizers support checkpointing with stable parameter keys
 optimizer = AdamW(params, lr=1e-3, weight_decay=0.01)
 state = optimizer.state_dict()  # Save
 optimizer.load_state_dict(state)  # Restore
 ```
+
+The module is pure NumPy (no PyTorch dependency), so the update rules are visible and
+hackable. Built-in learning-rate schedulers (`StepLR`, `CosineAnnealingLR`) and gradient
+utilities (`clip_grad_norm_`, `lr_finder`, `initialize_parameters`, `check_gradients`)
+live in `base.py` and `utils.py`.
 
 ### Loss Functions (`src/loss_examples.py`)
 
@@ -136,9 +146,14 @@ The capstone notebook (`notebooks/capstone_optimizer_showdown.ipynb`) is an exer
 ## Testing
 
 ```bash
-# Run validation tests
+# Run validation tests (16 tests; optimizers, training, and loss examples)
 python -m pytest tests/ -v
 ```
+
+`tests/test_optimizers.py` checks every optimizer against its PyTorch reference;
+`validate_training_examples.py` and `validate_loss_examples.py` exercise the schedule
+and loss modules. `validate_runtime_stack.py` additionally requires `torchvision`
+(used only for the super-resolution data pipeline) and is skipped if it is not installed.
 
 ## License
 
