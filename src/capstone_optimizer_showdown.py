@@ -1101,10 +1101,6 @@ class AdaFactor(Optimizer):
         self.m = None
         self.t = 0
 
-    def _get_rho(self):
-        """Compute decay rate as function of step."""
-        return min(self.decay_rate, -(self.t ** self.decay_rate))
-
     def step(self, model, grads):
         """Apply AdaFactor update with factorized second moments."""
         param_names = ['W1', 'b1', 'W2', 'b2', 'W3', 'b3']
@@ -1168,7 +1164,12 @@ class AdaFactor(Optimizer):
 
             # Learning rate (auto or specified)
             if self.auto_lr:
-                lr = max(self.epsilon2, 1.0 / np.sqrt(self.t))
+                # AdaFactor relative-step size: rho_t = min(1e-2, 1/sqrt(t)).
+                # A bare 1/sqrt(t) starts at 1.0, which is far too large for
+                # this MLP and makes the loss diverge in a few steps. The
+                # paper caps the auto step at 1e-2, which keeps training
+                # stable here.
+                lr = min(1e-2, 1.0 / np.sqrt(self.t))
             else:
                 lr = self.lr
 

@@ -177,7 +177,14 @@ class RMSprop(Optimizer):
                     grad_avg += (1 - alpha) * grad
 
                     # Use centered second moment: E[g^2] - E[g]^2
-                    avg = np.sqrt(square_avg - grad_avg ** 2 + eps)
+                    # The centered variance E[g^2] - E[g]^2 is non-negative in
+                    # exact arithmetic, but floating-point roundoff can push it
+                    # slightly negative, which would make sqrt return NaN. Clip
+                    # at 0 before the sqrt, then add eps OUTSIDE the sqrt to
+                    # match the non-centered branch (and the docstring) and to
+                    # guarantee the denominator is at least eps > 0.
+                    centered_var = np.maximum(square_avg - grad_avg ** 2, 0.0)
+                    avg = np.sqrt(centered_var) + eps
                 else:
                     avg = np.sqrt(square_avg) + eps
 
