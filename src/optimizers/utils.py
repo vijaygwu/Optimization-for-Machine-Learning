@@ -162,7 +162,7 @@ def compute_grad_norm(
         return max(per_grad_max) if per_grad_max else 0.0
     else:
         total_norm = sum(np.sum(np.abs(g) ** norm_type) for g in valid_grads)
-        return total_norm ** (1.0 / norm_type)
+        return float(total_norm ** (1.0 / norm_type))
 
 
 def warmup_lr(
@@ -466,7 +466,7 @@ def initialize_parameters(
 
     elif init_type == 'constant':
         value = kwargs.get('value', 0.0)
-        return np.full(shape, value)
+        return np.full(shape, value) * gain
 
     elif init_type == 'uniform':
         low = kwargs.get('low', -1.0)
