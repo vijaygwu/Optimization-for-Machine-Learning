@@ -238,11 +238,16 @@ class PerceptualLoss(nn.Module):
         tensor = self.normalize(tensor)
         features: dict[str, torch.Tensor] = {}
 
+        # Only run the backbone up to the deepest layer we actually need,
+        # avoiding wasted compute on the unused tail of VGG.
+        max_idx = max(self.layer_indices[name] for name in self.layers)
         for idx, layer in enumerate(self.feature_extractor):
             tensor = layer(tensor)
             for name, layer_idx in self.layer_indices.items():
                 if idx == layer_idx and name in self.layers:
                     features[name] = tensor
+            if idx >= max_idx:
+                break
 
         return features
 

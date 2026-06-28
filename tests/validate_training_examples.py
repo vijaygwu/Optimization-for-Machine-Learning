@@ -140,7 +140,7 @@ def test_adamw_with_warmup_scheduler_reaches_floor() -> None:
     assert np.isclose(lrs[1], 6.7e-4)
     assert np.isclose(lrs[2], 1e-3)
     assert max(lrs) <= 1e-3 + 1e-12
-    assert np.isclose(lrs[-1], 0.0, atol=1e-12)
+    assert np.isclose(lrs[-1], 1e-5, atol=1e-9)  # floored at peak_lr * min_lr_factor (1e-3 * 1e-2)
 
 
 def main() -> None:
