@@ -371,9 +371,6 @@ class NAdam(Optimizer):
         }
         super().__init__(params, defaults)
 
-        # Precompute momentum schedule
-        self._mu_schedule_product = 1.0
-
     def _init_state(self, param: np.ndarray, param_id: str) -> Dict[str, Any]:
         """Initialize optimizer state."""
         return {
