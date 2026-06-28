@@ -1164,12 +1164,15 @@ class AdaFactor(Optimizer):
 
             # Learning rate (auto or specified)
             if self.auto_lr:
-                # AdaFactor relative-step size: rho_t = min(1e-2, 1/sqrt(t)).
-                # A bare 1/sqrt(t) starts at 1.0, which is far too large for
-                # this MLP and makes the loss diverge in a few steps. The
-                # paper caps the auto step at 1e-2, which keeps training
-                # stable here.
-                lr = min(1e-2, 1.0 / np.sqrt(self.t))
+                # AdaFactor relative step size (Shazeer & Stern, 2018):
+                #   rho_t   = min(1e-2, 1/sqrt(t))                 (relative-step schedule)
+                #   alpha_t = max(epsilon2, RMS(theta)) * rho_t    (parameter-scale step)
+                # Scaling rho_t by the parameter RMS (floored at epsilon2) keeps the
+                # step proportional to each weight's magnitude. Without this factor the
+                # bare rho_t = 1e-2 is too large for this MLP and the loss diverges.
+                rho_t = min(1e-2, 1.0 / np.sqrt(self.t))
+                param_rms = np.sqrt(np.mean(params[i] ** 2))
+                lr = max(self.epsilon2, param_rms) * rho_t
             else:
                 lr = self.lr
 
