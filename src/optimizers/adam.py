@@ -357,6 +357,10 @@ class NAdam(Optimizer):
             raise ValueError(f"Invalid beta1 value: {betas[0]}")
         if not 0.0 <= betas[1] < 1.0:
             raise ValueError(f"Invalid beta2 value: {betas[1]}")
+        if eps < 0.0:
+            raise ValueError(f"Invalid epsilon value: {eps}")
+        if weight_decay < 0.0:
+            raise ValueError(f"Invalid weight_decay value: {weight_decay}")
 
         defaults = {
             'lr': lr,
