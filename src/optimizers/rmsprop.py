@@ -108,7 +108,7 @@ class RMSprop(Optimizer):
     def _init_state(
         self,
         param: np.ndarray,
-        param_id: int,
+        param_id: str,
         group: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """Initialize optimizer state for a parameter."""
@@ -255,8 +255,14 @@ class RMSpropTF(RMSprop):
                     grad_avg = state['grad_avg']
                     grad_avg *= alpha
                     grad_avg += (1 - alpha) * grad
-                    # TF-style: eps inside sqrt
-                    avg = np.sqrt(square_avg - grad_avg ** 2 + eps)
+                    # Clamp the centered variance at 0 before taking the root.
+                    # E[g^2] - E[g]^2 is non-negative in exact arithmetic, but
+                    # floating-point roundoff can push it slightly negative,
+                    # which would make sqrt return NaN. Mirror the clamp used in
+                    # the non-TF RMSprop centered branch. TF-style keeps eps
+                    # INSIDE the sqrt (the defining difference from RMSprop).
+                    centered_var = np.maximum(square_avg - grad_avg ** 2, 0.0)
+                    avg = np.sqrt(centered_var + eps)
                 else:
                     # TF-style: eps inside sqrt
                     avg = np.sqrt(square_avg + eps)

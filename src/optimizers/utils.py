@@ -87,8 +87,9 @@ def clip_grad_norm_(
 
     # Compute total norm
     if norm_type == float('inf'):
-        # Max norm
-        total_norm = max(np.abs(g).max() for g in valid_grads)
+        # Max norm. Skip empty arrays: np.abs(g).max() raises on size-0 arrays.
+        per_grad_max = [np.abs(g).max() for g in valid_grads if g.size > 0]
+        total_norm = max(per_grad_max) if per_grad_max else 0.0
     else:
         # Lp norm
         total_norm = 0.0
@@ -156,7 +157,9 @@ def compute_grad_norm(
         return 0.0
 
     if norm_type == float('inf'):
-        return max(np.abs(g).max() for g in valid_grads)
+        # Skip empty arrays: np.abs(g).max() raises on size-0 arrays.
+        per_grad_max = [np.abs(g).max() for g in valid_grads if g.size > 0]
+        return max(per_grad_max) if per_grad_max else 0.0
     else:
         total_norm = sum(np.sum(np.abs(g) ** norm_type) for g in valid_grads)
         return total_norm ** (1.0 / norm_type)

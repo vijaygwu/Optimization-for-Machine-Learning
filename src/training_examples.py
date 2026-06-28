@@ -99,8 +99,16 @@ def warmup_cosine_schedule(epoch, total_epochs, warmup_epochs, initial_lr, min_l
 
 def get_adamw_with_warmup(model, lr=1e-4, weight_decay=0.01,
                           warmup_steps=1000, total_steps=100000,
-                          warmup_init_lr_factor=1e-2):
-    """AdamW with linear warmup followed by cosine decay."""
+                          warmup_init_lr_factor=1e-2,
+                          min_lr_factor=1e-2):
+    """AdamW with linear warmup followed by cosine decay.
+
+    min_lr_factor sets a floor on the cosine decay so the learning rate never
+    reaches exactly 0 (final lr = peak_lr * min_lr_factor). This mirrors the
+    floored cosine_schedule used by the other recipes; a tiny residual LR keeps
+    the optimizer making small updates at the tail of training. Set
+    min_lr_factor=0.0 to decay all the way to zero.
+    """
     peak_lr = lr
     optimizer = AdamW(
         model.parameters(),
@@ -116,7 +124,8 @@ def get_adamw_with_warmup(model, lr=1e-4, weight_decay=0.01,
 
         if warmup_steps <= 0:
             progress = min(step / max(1, total_steps - 1), 1.0)
-            return 0.5 * (1.0 + math.cos(math.pi * progress))
+            cosine = 0.5 * (1.0 + math.cos(math.pi * progress))
+            return min_lr_factor + (1.0 - min_lr_factor) * cosine
 
         if step < warmup_steps:
             warmup_progress = step / max(1, warmup_steps)
@@ -124,7 +133,8 @@ def get_adamw_with_warmup(model, lr=1e-4, weight_decay=0.01,
 
         progress = (step - warmup_steps) / max(1, total_steps - warmup_steps - 1)
         progress = min(max(progress, 0.0), 1.0)
-        return 0.5 * (1.0 + math.cos(math.pi * progress))
+        cosine = 0.5 * (1.0 + math.cos(math.pi * progress))
+        return min_lr_factor + (1.0 - min_lr_factor) * cosine
 
     scheduler = LambdaLR(optimizer, lr_lambda)
     if warmup_steps > 0:
