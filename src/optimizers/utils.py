@@ -633,8 +633,9 @@ def check_gradients(
 # Learning Rate Finder (PyTorch)
 # =============================================================================
 
-def lr_finder(model, train_loader, optimizer_class=None, criterion=None,
-              start_lr: float = 1e-8, end_lr: float = 10, num_steps: int = 100):
+def lr_finder(model, train_loader, optimizer_class=None, optimizer_kwargs=None,
+              criterion=None, start_lr: float = 1e-8, end_lr: float = 10,
+              num_steps: int = 100):
     """
     Learning rate range test to find optimal learning rate.
 
@@ -646,6 +647,8 @@ def lr_finder(model, train_loader, optimizer_class=None, criterion=None,
         model: PyTorch model to test
         train_loader: DataLoader for training data
         optimizer_class: Optimizer class (default: torch.optim.SGD)
+        optimizer_kwargs: Dict of additional optimizer args (e.g., momentum=0.9,
+            weight_decay=1e-4). Any ``lr`` key is ignored; the range test sets it.
         criterion: Loss function (default: CrossEntropyLoss)
         start_lr: Starting learning rate (very small)
         end_lr: Ending learning rate (very large)
@@ -674,6 +677,9 @@ def lr_finder(model, train_loader, optimizer_class=None, criterion=None,
 
     if optimizer_class is None:
         optimizer_class = torch.optim.SGD
+
+    if optimizer_kwargs is None:
+        optimizer_kwargs = {}
 
     if criterion is None:
         criterion = nn.CrossEntropyLoss()
@@ -709,8 +715,10 @@ def lr_finder(model, train_loader, optimizer_class=None, criterion=None,
     was_training = model.training
 
     try:
-        # Create optimizer with initial learning rate
-        optimizer = optimizer_class(model.parameters(), lr=start_lr)
+        # Create optimizer with initial learning rate, forwarding any extra
+        # kwargs (momentum, weight_decay, ...); an explicit lr is ignored here.
+        opt_kwargs = {k: v for k, v in optimizer_kwargs.items() if k != 'lr'}
+        optimizer = optimizer_class(model.parameters(), lr=start_lr, **opt_kwargs)
         lr_mult = (end_lr / start_lr) ** (1 / (num_steps - 1))
 
         lrs, losses = [], []
