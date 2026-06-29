@@ -1123,7 +1123,9 @@ class AdaFactor(Optimizer):
                     self.m[name] = np.zeros_like(grads[name])
 
         self.t += 1
-        rho = min(0.999, (1 + self.t) ** self.decay_rate)
+        # Second-moment EMA decay grows toward 1 over time (Shazeer & Stern, 2018):
+        # rho_t = 1 - t^decay_rate with decay_rate = -0.8.
+        rho = min(0.999, 1.0 - (1 + self.t) ** self.decay_rate)
 
         for i, name in enumerate(param_names):
             g = grads[name]
