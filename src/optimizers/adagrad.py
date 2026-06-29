@@ -73,7 +73,7 @@ class Adagrad(Optimizer):
             params: Iterator of parameters to optimize.
             lr: Learning rate (default: 0.01).
             lr_decay: Learning rate decay applied at each step (default: 0).
-                Effective lr = lr / (1 + step * lr_decay)
+                Effective lr = lr / (1 + (step - 1) * lr_decay)
             eps: Term added to denominator for numerical stability
                 (default: 1e-10).
             initial_accumulator_value: Initial value for gradient accumulator
