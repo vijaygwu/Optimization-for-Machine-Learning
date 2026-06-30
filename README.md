@@ -118,6 +118,8 @@ perceptual_loss = PerceptualLoss(
 ).to(device)
 ```
 
+`PerceptualLoss` downloads pretrained VGG19 weights on first use (requires internet); to run offline, pre-cache them in your `torch.hub` directory or pass a local weights path.
+
 ### Training Utilities (`src/training_examples.py`)
 
 Common training patterns:
@@ -152,7 +154,8 @@ It trains the optimizers on MNIST (with an offline synthetic fallback if the dat
 ## Testing
 
 ```bash
-# Run validation tests (16 tests; optimizers, training, and loss examples)
+# Optimizer unit tests (16 cases; the training/loss modules are exercised by the
+# standalone validate_*.py scripts described below)
 python -m pytest tests/ -v
 ```
 

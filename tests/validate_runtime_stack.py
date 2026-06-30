@@ -8,7 +8,13 @@ import sys
 
 import numpy as np
 import torch
-import torchvision
+
+try:
+    import torchvision  # noqa: F401
+except ImportError:
+    print("SKIP: validate_runtime_stack requires torchvision (not installed).")
+    raise SystemExit(0)
+
 from scipy.special import logsumexp
 from sklearn.datasets import load_digits
 from sklearn.model_selection import train_test_split
