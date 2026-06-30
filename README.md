@@ -84,8 +84,8 @@ jupyter notebook notebooks/
 
 ### From-Scratch Optimizers (`src/optimizers/`)
 
-Clean, educational implementations of ten optimizers — each unit-tested against its
-PyTorch equivalent to machine precision, and kept in sync with the listings printed in
+Clean, educational implementations of ten optimizers — each covered by unit tests for
+its update rule and numerical behavior, and kept in sync with the listings printed in
 the book:
 
 ```python
@@ -135,7 +135,13 @@ augmented = cutout(image, mask_size=16)
 
 ## Capstone Project
 
-The capstone notebook (`notebooks/capstone_optimizer_showdown.ipynb`) is an exercise workbook that mirrors the book chapter and leaves some implementation checkpoints for the reader. The fully maintained runnable benchmark lives in `src/capstone_optimizer_showdown.py`.
+The capstone notebook (`notebooks/capstone_optimizer_showdown.ipynb`) is an exercise workbook that mirrors the book chapter and leaves some implementation checkpoints for the reader. The fully maintained runnable benchmark lives in `src/capstone_optimizer_showdown.py`. Run it directly from the repo root:
+
+```bash
+python -m src.capstone_optimizer_showdown
+```
+
+It trains the optimizers on MNIST (with an offline synthetic fallback if the dataset cannot be downloaded), selects on a validation split, and reports held-out test accuracy. You can also `from src.capstone_optimizer_showdown import run_optimizer_showdown` and call it directly.
 
 ## Additional Resources
 
@@ -150,9 +156,9 @@ The capstone notebook (`notebooks/capstone_optimizer_showdown.ipynb`) is an exer
 python -m pytest tests/ -v
 ```
 
-`tests/test_optimizers.py` checks every optimizer against its PyTorch reference;
-`validate_training_examples.py` and `validate_loss_examples.py` exercise the schedule
-and loss modules. `validate_runtime_stack.py` additionally requires `torchvision`
+`tests/test_optimizers.py` checks each optimizer's update direction, bias correction,
+convergence, and input validation; `validate_training_examples.py` and
+`validate_loss_examples.py` exercise the schedule and loss modules. `validate_runtime_stack.py` additionally requires `torchvision`
 (used only for the super-resolution data pipeline) and is skipped if it is not installed.
 
 ## License
